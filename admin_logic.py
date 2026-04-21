@@ -21,442 +21,147 @@ def get_local_image_base64(username):
 @st.dialog("📚 Bulk Add Applicants")
 def bulk_add_applicants_dialog(engine):
     st.markdown("**Format:** `Name, Proposal Title, Institution, Info Link, Remarks` (One per line)")
-    raw_data = st.text_area("Paste Applicant List Here", height=200, placeholder="Ali, AI Study, UKM, https://link, High Priority")
+    raw_data = st.text_area("Paste Applicant List Here", height=200)
     
     if st.button("Import Applicants", type="primary"):
         if not raw_data.strip():
-            st.error("🚨 Please paste data first.")
+            st.error("🚨 Sila masukkan data.")
             return
         lines = [line.strip() for line in raw_data.split('\n') if line.strip()]
         count = 0
-        duplicates = []
         with engine.begin() as conn:
             for line in lines:
                 parts = [p.strip() for p in line.split(',')]
                 if len(parts) >= 2:
-                    app = parts[0]
-                    title = parts[1]
+                    app, title = parts[0], parts[1]
                     inst = parts[2] if len(parts) > 2 else None
                     link = parts[3] if len(parts) > 3 else None
                     rem = parts[4] if len(parts) > 4 else None
-                    
-                    check = conn.execute(text("SELECT id FROM applicants WHERE name = :n"), {"n": app}).fetchone()
-                    if check:
-                        duplicates.append(app)
-                    else:
-                        conn.execute(text("""
-                            INSERT INTO applicants (name, proposal_title, institution, info_link, remarks) 
-                            VALUES (:n, :t, :i, :l, :r)
-                        """), {"n": app, "t": title, "i": inst, "l": link, "r": rem})
-                        count += 1
-        
-        if count > 0:
-            st.cache_resource.clear()
-            st.success(f"✅ Successfully imported {count} applicants!")
-        if duplicates:
-            st.warning(f"⚠️ The following names already exist and were skipped: {', '.join(duplicates)}")
-        if count > 0:
-            time.sleep(1)
-            st.rerun()
+                    conn.execute(text("INSERT INTO applicants (name, proposal_title, institution, info_link, remarks) VALUES (:n, :t, :i, :l, :r) ON CONFLICT (name) DO NOTHING"), {"n": app, "t": title, "i": inst, "l": link, "r": rem})
+                    count += 1
+        st.cache_resource.clear()
+        st.success(f"✅ Imported {count} applicants!"); time.sleep(1); st.rerun()
 
 @st.dialog("📚 Bulk Add Reviewers")
 def bulk_add_reviewers_dialog(engine, hash_password):
     st.markdown("**Format:** `Full Name, Username, Password` (One per line)")
-    raw_data = st.text_area("Paste Reviewer List Here", height=200, placeholder="Dr. Rahmat, rahmat.d, Secur3P@ss!\nProf. Lim, lim.cs, 12345678")
-    
+    raw_data = st.text_area("Paste Reviewer List Here", height=200)
     if st.button("Import Reviewers", type="primary"):
-        if not raw_data.strip():
-            st.error("🚨 Please paste data first.")
-            return
         lines = [line.strip() for line in raw_data.split('\n') if line.strip()]
         count = 0
         with engine.begin() as conn:
             for line in lines:
                 parts = [p.strip() for p in line.split(',')]
                 if len(parts) >= 3:
-                    name, user, pwd = parts[0], parts[1], parts[2]
-                    conn.execute(text("INSERT INTO reviewers (username, full_name, password_hash) VALUES (:u, :n, :p) ON CONFLICT DO NOTHING"), 
-                                 {"u": user.strip(), "n": name.strip(), "p": hash_password(pwd.strip())})
+                    conn.execute(text("INSERT INTO reviewers (username, full_name, password_hash) VALUES (:u, :n, :p) ON CONFLICT (username) DO NOTHING"), {"u": parts[1], "n": parts[0], "p": hash_password(parts[2])})
                     count += 1
-        st.cache_resource.clear()
-        st.success(f"✅ Successfully imported {count} reviewers!")
-        time.sleep(1)
-        st.rerun()
+        st.cache_resource.clear(); st.success(f"✅ Imported {count} reviewers!"); time.sleep(1); st.rerun()
 
-@st.dialog("✏️ Edit Applicant Details")
-def edit_applicant_dialog(app_id, old_name, old_title, old_inst, old_link, old_rem, engine):
-    new_name = st.text_input("Applicant Name*", value=old_name)
-    new_inst = st.text_input("Institution", value=old_inst if old_inst else "")
-    new_title = st.text_input("Proposal Title*", value=old_title)
-    new_rem = st.text_area("Remarks", value=old_rem if old_rem else "")
-    new_link = st.text_input("OneDrive/Info Link", value=old_link if old_link else "")
-    new_photo = st.file_uploader("Upload New Photo", type=['png', 'jpg'])
-    
-    if st.button("Save Changes", type="primary"):
-        if new_name and new_title:
-            with engine.begin() as conn:
-                if new_name != old_name:
-                    conn.execute(text("UPDATE applicant_assignments SET applicant_name = :new WHERE applicant_name = :old"), {"new": new_name, "old": old_name})
-                    conn.execute(text("UPDATE reviews SET applicant_name = :new WHERE applicant_name = :old"), {"new": new_name, "old": old_name})
-                    conn.execute(text("UPDATE phase2_assignments SET applicant_name = :new WHERE applicant_name = :old"), {"new": new_name, "old": old_name})
-                    conn.execute(text("UPDATE phase2_reviews SET applicant_name = :new WHERE applicant_name = :old"), {"new": new_name, "old": old_name})
-                
-                if new_photo:
-                    conn.execute(text("""
-                        UPDATE applicants SET name=:n, proposal_title=:t, institution=:inst, info_link=:l, remarks=:r, photo=:p WHERE id=:id
-                    """), {"n": new_name.strip(), "t": new_title.strip(), "inst": new_inst.strip(), "l": new_link, "r": new_rem, "p": new_photo.getvalue(), "id": app_id})
-                else:
-                    conn.execute(text("""
-                        UPDATE applicants SET name=:n, proposal_title=:t, institution=:inst, info_link=:l, remarks=:r WHERE id=:id
-                    """), {"n": new_name.strip(), "t": new_title.strip(), "inst": new_inst.strip(), "l": new_link, "r": new_rem, "id": app_id})
-            
-            st.cache_resource.clear()
-            st.success("✅ Applicant Updated!")
-            time.sleep(1)
-            st.rerun()
-
-@st.dialog("✏️ Edit Reviewer Details")
-def edit_reviewer_dialog(rev_id, old_user, old_name, engine, hash_password):
-    new_name = st.text_input("Full Name*", value=old_name)
-    new_user = st.text_input("Username (Email/Staff ID)*", value=old_user)
-    new_pass = st.text_input("New Password (Leave blank to keep current)", type="password")
-    new_photo = st.file_uploader("Upload New Photo", type=['png', 'jpg'])
-    
-    if st.button("Save Changes", type="primary"):
-        if new_name and new_user:
-            with engine.begin() as conn:
-                if new_user != old_user:
-                    conn.execute(text("UPDATE applicant_assignments SET reviewer_username = :new WHERE reviewer_username = :old"), {"new": new_user, "old": old_user})
-                    conn.execute(text("UPDATE reviews SET reviewer_username = :new WHERE reviewer_username = :old"), {"new": new_user, "old": old_user})
-                    conn.execute(text("UPDATE phase2_assignments SET reviewer_username = :new WHERE reviewer_username = :old"), {"new": new_user, "old": old_user})
-                    conn.execute(text("UPDATE phase2_reviews SET reviewer_username = :new WHERE reviewer_username = :old"), {"new": new_user, "old": old_user})
-                
-                if new_pass:
-                    conn.execute(text("UPDATE reviewers SET full_name = :n, username = :u, password_hash = :p WHERE id = :id"),
-                                 {"n": new_name.strip(), "u": new_user.strip(), "p": hash_password(new_pass), "id": rev_id})
-                else:
-                    conn.execute(text("UPDATE reviewers SET full_name = :n, username = :u WHERE id = :id"),
-                                 {"n": new_name.strip(), "u": new_user.strip(), "id": rev_id})
-            
-            if new_photo:
-                save_path = os.path.join(PHOTO_DIR, f"{new_user.strip().replace(' ', '_')}.png")
-                with open(save_path, "wb") as f:
-                    f.write(new_photo.getvalue())
-            elif new_user != old_user:
-                old_path = os.path.join(PHOTO_DIR, f"{old_user.strip().replace(' ', '_')}.png")
-                new_path = os.path.join(PHOTO_DIR, f"{new_user.strip().replace(' ', '_')}.png")
-                if os.path.exists(old_path):
-                    os.rename(old_path, new_path)
-            
-            st.cache_resource.clear()
-            st.success("✅ Reviewer Updated!")
-            time.sleep(1)
-            st.rerun()
-
-# --- 2. RENDER DASHBOARD (TRACKER) ---
+# --- 2. RENDER DASHBOARD ---
 def render_dashboard(engine):
     st.header("📊 Live Evaluation Tracker")
-    
-    if st.button("🔄 Sync Dashboard Data", type="secondary"):
-        st.cache_resource.clear()
-        st.rerun()
+    if st.button("🔄 Sync Dashboard Data"): st.cache_resource.clear(); st.rerun()
         
     revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
     
-    # --- PHASE 1 TRACKER ---
+    # Phase 1 Status
     st.subheader("📋 Phase 1: Shortlisting Status")
     reviews_p1 = pd.read_sql("SELECT reviewer_username, is_final FROM reviews", engine)
-    try:
-        assign_p1 = pd.read_sql("SELECT applicant_name, reviewer_username FROM applicant_assignments", engine)
-    except:
-        assign_p1 = pd.DataFrame(columns=['applicant_name', 'reviewer_username'])
-        
+    assign_p1 = pd.read_sql("SELECT applicant_name, reviewer_username FROM applicant_assignments", engine)
+    
     if not revs_df.empty:
         cols = st.columns(4)
         for i, row in revs_df.iterrows():
-            u_name, f_name = row['username'], row['full_name']
-            assigned_count = len(assign_p1[assign_p1['reviewer_username'] == u_name])
-            done_count = len(reviews_p1[(reviews_p1['reviewer_username'] == u_name)])
-            is_done = (done_count >= assigned_count) and assigned_count > 0
-            bg, border_col = ("#E6FFFA", '#38B2AC') if is_done else ("#FFFBEB", '#ECC94B')
-            img_uri = get_local_image_base64(u_name)
-            
+            u, f = row['username'], row['full_name']
+            assigned = len(assign_p1[assign_p1['reviewer_username'] == u])
+            done = len(reviews_p1[reviews_p1['reviewer_username'] == u])
+            bg = "#E6FFFA" if (done >= assigned and assigned > 0) else "#FFFBEB"
             with cols[i % 4]:
-                st.markdown(f"""
-                    <div style="background-color:{bg}; border-top: 5px solid {border_col}; padding:15px; border-radius:8px; text-align:center; margin-bottom:10px;">
-                        <img src="{img_uri}" style="width:50px; height:50px; border-radius:50%; object-fit:cover;">
-                        <p style="font-weight:bold; margin:5px 0 0 0; color:#333; font-size:0.9em;">{f_name}</p>
-                        <p style="font-size:1em; font-weight:bold; color:#1E3A8A;">{done_count} / {assigned_count} Done</p>
-                    </div>
-                """, unsafe_allow_html=True)
+                st.markdown(f"<div style='background-color:{bg}; padding:10px; border-radius:5px;'><strong>{f}</strong><br>{done}/{assigned} Done</div>", unsafe_allow_html=True)
 
     st.divider()
-
-    # --- PHASE 2 TRACKER ---
+    # Phase 2 Status
     st.subheader("🏆 Phase 2: Winner Selection Status")
+    assign_p2 = pd.read_sql("SELECT applicant_name, reviewer_username FROM phase2_assignments", engine)
     reviews_p2 = pd.read_sql("SELECT reviewer_username, is_final FROM phase2_reviews", engine)
-    try:
-        assign_p2 = pd.read_sql("SELECT applicant_name, reviewer_username FROM phase2_assignments", engine)
-    except:
-        assign_p2 = pd.DataFrame(columns=['applicant_name', 'reviewer_username'])
-        
+    
     if not revs_df.empty:
         cols2 = st.columns(4)
         for i, row in revs_df.iterrows():
-            u_name, f_name = row['username'], row['full_name']
-            assigned_count = len(assign_p2[assign_p2['reviewer_username'] == u_name])
-            done_count = len(reviews_p2[(reviews_p2['reviewer_username'] == u_name)])
-            
-            # Hanya tunjuk penilai yang di-assign untuk fasa 2
-            if assigned_count > 0:
-                is_done = (done_count >= assigned_count)
-                bg, border_col = ("#F3E8FF", '#9333EA') if is_done else ("#FFFBEB", '#ECC94B')
-                img_uri = get_local_image_base64(u_name)
-                
+            u, f = row['username'], row['full_name']
+            assigned = len(assign_p2[assign_p2['reviewer_username'] == u])
+            if assigned > 0:
+                done = len(reviews_p2[reviews_p2['reviewer_username'] == u])
                 with cols2[i % 4]:
-                    st.markdown(f"""
-                        <div style="background-color:{bg}; border-top: 5px solid {border_col}; padding:15px; border-radius:8px; text-align:center; margin-bottom:10px;">
-                            <img src="{img_uri}" style="width:50px; height:50px; border-radius:50%; object-fit:cover;">
-                            <p style="font-weight:bold; margin:5px 0 0 0; color:#333; font-size:0.9em;">{f_name}</p>
-                            <p style="font-size:1em; font-weight:bold; color:#9333EA;">{done_count} / {assigned_count} Done</p>
-                        </div>
-                    """, unsafe_allow_html=True)
-            elif len(assign_p2) == 0 and i == 0:
-                st.info("Awaiting Phase 2 assignments.")
+                    st.markdown(f"<div style='background-color:#F3E8FF; padding:10px; border-radius:5px;'><strong>{f}</strong><br>{done}/{assigned} Done</div>", unsafe_allow_html=True)
 
-    st.divider()
-    with st.expander("⚠️ Danger Zone: System Reset"):
-        st.warning("This will completely wipe out ALL applicants, assignments, and reviews (Phase 1 & 2) for a new cycle.")
-        confirm_reset = st.checkbox("I understand and want to reset.")
-        if st.button("🗄️ Master Reset Entire System", type="primary", disabled=not confirm_reset):
-            with engine.begin() as conn:
-                conn.execute(text("DELETE FROM reviews"))
-                conn.execute(text("DELETE FROM applicant_assignments"))
-                conn.execute(text("DELETE FROM phase2_reviews"))
-                conn.execute(text("DELETE FROM phase2_assignments"))
-                conn.execute(text("DELETE FROM applicants"))
-            st.cache_resource.clear()
-            st.success("✅ Complete System Reset!"); time.sleep(2); st.rerun()
-
-# --- 4. RENDER MANAGEMENT MENUS ---
+# --- 3. RENDER MANAGEMENT ---
 def render_management(menu, engine, hash_password, delete_item):
-    
-    # ============================================================
-    # MENU: PHASE 1 MANAGEMENT (SHORTLISTING)
-    # ============================================================
     if menu == "Phase 1 Management":
-        st.header("📋 Phase 1: Shortlisting Assignments")
+        st.header("📋 Phase 1: Shortlisting")
+        if st.button("📚 Bulk Add Applicants"): bulk_add_applicants_dialog(engine)
         
-        if st.button("🔄 Sync Phase 1 Data", type="secondary", use_container_width=True):
-            st.cache_resource.clear()
-            st.rerun()
-            
-        st.divider()
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("📚 Bulk Add Applicants", use_container_width=True): bulk_add_applicants_dialog(engine)
-        with c2:
-            with st.expander("➕ Add Single Proposal"):
-                with st.form("add_p", clear_on_submit=True):
-                    a_name = st.text_input("Applicant Name*")
-                    p_inst = st.text_input("Institution")
-                    p_title = st.text_input("Proposal Title*")
-                    p_rem = st.text_area("Remarks")
-                    p_link = st.text_input("OneDrive/Info Link")
-                    p_photo = st.file_uploader("Photo", type=['png', 'jpg'])
-                    if st.form_submit_button("Add"):
-                        if a_name and p_title:
-                            try:
-                                with engine.begin() as conn:
-                                    conn.execute(text("INSERT INTO applicants (name, proposal_title, institution, info_link, remarks, photo) VALUES (:n, :t, :i, :l, :r, :p)"), 
-                                                 {"n": a_name.strip(), "t": p_title.strip(), "i": p_inst.strip(), "l": p_link, "r": p_rem, "p": p_photo.getvalue() if p_photo else None})
-                                st.cache_resource.clear()
-                                st.success(f"✅ Added!"); time.sleep(1); st.rerun()
-                            except Exception as e:
-                                st.error("🚨 Duplicate name or error occurred.")
-                        else:
-                            st.error("🚨 Name and Title are required.")
-
-        st.divider()
-        st.subheader("🔗 Assign Applicants (Phase 1)")
-        
-        with st.expander("⚠️ Master Reset Scores (Phase 1)"):
-            confirm_master_reset = st.checkbox("Saya faham, kosongkan semua markah Fasa 1 sekarang.")
-            if st.button("🗑️ Reset Phase 1 Scoring", type="primary", disabled=not confirm_master_reset):
-                with engine.begin() as conn:
-                    conn.execute(text("UPDATE reviews SET responses = '{}', final_recommendation = NULL, overall_justification = NULL, is_final = FALSE"))
-                st.cache_resource.clear()
-                st.success("✅ Markah Fasa 1 berjaya dikosongkan!"); time.sleep(1); st.rerun()
-
-        apps_df = pd.read_sql("SELECT id, name, proposal_title, institution, remarks, info_link FROM applicants ORDER BY id ASC", engine)
-        st.info(f"📊 **Total Applicants Registered:** {len(apps_df)}")
-
+        apps_df = pd.read_sql("SELECT * FROM applicants ORDER BY id ASC", engine)
         revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
-        try:
-            assign_df = pd.read_sql("SELECT applicant_name, reviewer_username FROM applicant_assignments", engine)
-        except:
-            assign_df = pd.DataFrame(columns=['applicant_name', 'reviewer_username'])
-            
-        reviewer_options = revs_df['username'].tolist() if not revs_df.empty else []
-        reviewer_map = dict(zip(revs_df['username'], revs_df['full_name']))
+        assign_df = pd.read_sql("SELECT * FROM applicant_assignments", engine)
+        
+        rev_map = dict(zip(revs_df['username'], revs_df['full_name']))
         
         for idx, row in apps_df.iterrows():
-            app_name = row['name']
             with st.container(border=True):
-                c1, c2, c3 = st.columns([4, 3, 2])
-                c1.write(f"**{idx + 1}. {app_name}**")
-                c1.caption(f"🏫 {row['institution'] if row['institution'] else 'N/A'} | {row['proposal_title']}")
-                
-                current_assigned = assign_df[assign_df['applicant_name'] == app_name]['reviewer_username'].tolist()
-                selected_revs = c2.multiselect("Assign Reviewers:", options=reviewer_options, default=current_assigned, format_func=lambda x: f"{reviewer_map.get(x, x)} ({x})", key=f"p1_as_{app_name}")
-                
-                if c2.button("💾 Save", key=f"p1_sv_{app_name}"):
+                c1, c2 = st.columns([3, 1])
+                c1.write(f"**{row['name']}**")
+                c1.caption(f"{row['institution'] if row['institution'] else 'N/A'} | {row['proposal_title']}")
+                curr = assign_df[assign_df['applicant_name'] == row['name']]['reviewer_username'].tolist()
+                sel = c1.multiselect("Assign Phase 1 Reviewers:", options=list(rev_map.keys()), default=curr, format_func=lambda x: rev_map.get(x), key=f"p1_{row['name']}")
+                if c2.button("💾 Save", key=f"s1_{row['name']}"):
                     with engine.begin() as conn:
-                        conn.execute(text("DELETE FROM applicant_assignments WHERE applicant_name = :a"), {"a": app_name})
-                        for rev in selected_revs:
-                            conn.execute(text("INSERT INTO applicant_assignments (applicant_name, reviewer_username) VALUES (:a, :r)"), {"a": app_name, "r": rev})
-                    st.cache_resource.clear(); st.success("Saved!"); time.sleep(0.5); st.rerun()
-                
-                c3_1, c3_2 = c3.columns(2)
-                if c3_1.button("✏️", key=f"ed_{row['id']}"):
-                    edit_applicant_dialog(row['id'], app_name, row['proposal_title'], row['institution'], row['info_link'], row['remarks'], engine)
-                if c3_2.button("🗑️", key=f"dl_{row['id']}"):
-                    with engine.begin() as conn:
-                        conn.execute(text("DELETE FROM applicant_assignments WHERE applicant_name = :a"), {"a": app_name})
-                        conn.execute(text("DELETE FROM phase2_assignments WHERE applicant_name = :a"), {"a": app_name})
-                    delete_item("applicants", row['id'])
+                        conn.execute(text("DELETE FROM applicant_assignments WHERE applicant_name = :a"), {"a": row['name']})
+                        for r in sel:
+                            conn.execute(text("INSERT INTO applicant_assignments (applicant_name, reviewer_username) VALUES (:a, :r)"), {"a": row['name'], "r": r})
+                    st.success("Saved!"); time.sleep(0.5); st.rerun()
 
-    # ============================================================
-    # MENU: PHASE 2 MANAGEMENT (WINNER SELECTION)
-    # ============================================================
     elif menu == "Phase 2 Management":
-        st.header("🏆 Phase 2: Finalist Assignments")
-        st.info("Hanya pemohon yang mendapat undian 'YES' pada Fasa 1 (Shortlisting) akan disenaraikan secara automatik di sini.")
+        st.header("🏆 Phase 2: Finalist Selection")
+        # Query dengan UPPER() supaya tak sensitif pada huruf besar/kecil
+        finalists_df = pd.read_sql(text("SELECT DISTINCT a.id, a.name, a.proposal_title, a.institution FROM applicants a JOIN reviews r ON a.name = r.applicant_name WHERE UPPER(r.final_recommendation) = 'YES'"), engine)
         
-        if st.button("🔄 Sync Phase 2 Data", type="secondary", use_container_width=True):
-            st.cache_resource.clear()
-            st.rerun()
-            
-        st.divider()
-        with st.expander("⚠️ Master Reset Scores (Phase 2)"):
-            confirm_p2_reset = st.checkbox("Saya faham, kosongkan semua markah Fasa 2 sekarang.")
-            if st.button("🗑️ Reset Phase 2 Scoring", type="primary", disabled=not confirm_p2_reset):
-                with engine.begin() as conn:
-                    conn.execute(text("UPDATE phase2_reviews SET responses = '{}', final_recommendation = NULL, overall_justification = NULL, is_final = FALSE"))
-                st.cache_resource.clear()
-                st.success("✅ Markah Fasa 2 berjaya dikosongkan!"); time.sleep(1); st.rerun()
-
-        # Dapatkan senarai FINALIST (Dapat 'YES' dari mana-mana penilai Fasa 1)
-        finalists_query = text("""
-        SELECT DISTINCT a.id, a.name, a.proposal_title, a.institution
-        FROM applicants a
-        JOIN reviews r ON a.name = r.applicant_name
-        WHERE UPPER(r.final_recommendation) = 'YES'
-        """)
-        finalists_df = pd.read_sql(finalists_query, engine)
-        
-        st.success(f"🎉 **Total Finalists (Passed Phase 1):** {len(finalists_df)}")
-
         revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
-        try:
-            assign_p2_df = pd.read_sql("SELECT applicant_name, reviewer_username FROM phase2_assignments", engine)
-        except:
-            assign_p2_df = pd.DataFrame(columns=['applicant_name', 'reviewer_username'])
-            
-        reviewer_options = revs_df['username'].tolist() if not revs_df.empty else []
-        reviewer_map = dict(zip(revs_df['username'], revs_df['full_name']))
-        
+        assign_p2 = pd.read_sql("SELECT * FROM phase2_assignments", engine)
+        rev_map = dict(zip(revs_df['username'], revs_df['full_name']))
+
         if finalists_df.empty:
-            st.warning("Belum ada pemohon yang mendapat 'YES' dari penilai Fasa 1.")
+            st.warning("Belum ada pemohon yang lulus Fasa 1.")
         else:
             for idx, row in finalists_df.iterrows():
-                app_name = row['name']
                 with st.container(border=True):
-                    c1, c2 = st.columns([5, 4])
-                    c1.write(f"**{idx + 1}. {app_name}**")
-                    c1.caption(f"🏫 {row['institution'] if row['institution'] else 'N/A'} | {row['proposal_title']}")
-                    
-                    current_assigned = assign_p2_df[assign_p2_df['applicant_name'] == app_name]['reviewer_username'].tolist()
-                    selected_revs = c2.multiselect("Assign Sub-committee (Phase 2):", options=reviewer_options, default=current_assigned, format_func=lambda x: f"{reviewer_map.get(x, x)} ({x})", key=f"p2_as_{app_name}")
-                    
-                    if c2.button("💾 Save Phase 2 Assignment", key=f"p2_sv_{app_name}", type="primary"):
+                    c1, c2 = st.columns([3, 1])
+                    c1.write(f"**{row['name']}**")
+                    curr = assign_p2[assign_p2['applicant_name'] == row['name']]['reviewer_username'].tolist()
+                    sel = c1.multiselect("Assign Phase 2 Reviewers:", options=list(rev_map.keys()), default=curr, format_func=lambda x: rev_map.get(x), key=f"p2_{row['name']}")
+                    if c2.button("💾 Save", key=f"s2_{row['name']}"):
                         with engine.begin() as conn:
-                            conn.execute(text("DELETE FROM phase2_assignments WHERE applicant_name = :a"), {"a": app_name})
-                            for rev in selected_revs:
-                                conn.execute(text("INSERT INTO phase2_assignments (applicant_name, reviewer_username) VALUES (:a, :r)"), {"a": app_name, "r": rev})
-                        st.cache_resource.clear(); st.success("Saved!"); time.sleep(0.5); st.rerun()
+                            conn.execute(text("DELETE FROM phase2_assignments WHERE applicant_name = :a"), {"a": row['name']})
+                            for r in sel:
+                                conn.execute(text("INSERT INTO phase2_assignments (applicant_name, reviewer_username) VALUES (:a, :r)"), {"a": row['name'], "r": r})
+                        st.success("Saved!"); time.sleep(0.5); st.rerun()
 
-    # ============================================================
-    # MENU: REVIEWER & USER MANAGEMENT
-    # ============================================================
     elif menu == "Reviewer Management":
-        st.header("👤 Evaluators & Access Links")
-        if st.button("🔄 Sync System Data", type="secondary", use_container_width=True): st.cache_resource.clear(); st.rerun()
-        st.divider()
-        if st.button("📚 Bulk Add Reviewers"): bulk_add_reviewers_dialog(engine, hash_password)
-
+        st.header("👤 Evaluator Management")
         with st.expander("➕ Add Single Evaluator"):
-    with st.form("add_rev", clear_on_submit=True):
-        r_name = st.text_input("Full Name*")
-        r_user = st.text_input("Username*")
-        r_pass = st.text_input("Password*", type="password") 
-        e_file = st.file_uploader("Photo (Optional)", type=['png', 'jpg'])
-        
-        if st.form_submit_button("Save Evaluator", type="primary"):
-            if r_name and r_user and r_pass:
-                try:
-                    with engine.begin() as conn:
-                        # Buang ON CONFLICT DO NOTHING supaya kita nampak ralat jika username bertindih
-                        conn.execute(text("""
-                            INSERT INTO reviewers (username, full_name, password_hash) 
-                            VALUES (:u, :n, :p)
-                        """), {
-                            "u": r_user.strip(), 
-                            "n": r_name.strip(), 
-                            "p": hash_password(r_pass)
-                        })
-                    
-                    # Simpan gambar jika ada
-                    if e_file:
-                        save_path = os.path.join(PHOTO_DIR, f"{r_user.strip().replace(' ', '_')}.png")
-                        with open(save_path, "wb") as f:
-                            f.write(e_file.getvalue())
-                    
-                    st.cache_resource.clear() # Bersihkan cache supaya senarai baru muncul
-                    st.success(f"✅ Evaluator {r_name} berjaya didaftarkan!")
-                    time.sleep(1)
-                    st.rerun() # Paksa Streamlit refresh skrin
-                    
-                except Exception as e:
-                    # Paparkan ralat sebenar jika gagal (contoh: Username dah wujud)
-                    st.error(f"🚨 Gagal menambah penilai: {str(e)}")
-            else:
-                st.warning("⚠️ Sila isi semua ruangan bertanda *")
+            with st.form("add_rev", clear_on_submit=True):
+                n, u, p = st.text_input("Name"), st.text_input("Username"), st.text_input("Password", type="password")
+                if st.form_submit_button("Save Evaluator"):
+                    if n and u and p:
+                        try:
+                            with engine.begin() as conn:
+                                conn.execute(text("INSERT INTO reviewers (username, full_name, password_hash) VALUES (:u, :n, :p)"), {"u": u.strip(), "n": n.strip(), "p": hash_password(p)})
+                            st.cache_resource.clear(); st.success("Added!"); time.sleep(1); st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
 
-        st.divider()
         df = pd.read_sql("SELECT id, username, full_name FROM reviewers ORDER BY id ASC", engine)
         for idx, row in df.iterrows():
-            c1, c2, c3, c4 = st.columns([1, 5, 1, 1])
-            c1.markdown(f"<img src='{get_local_image_base64(row['username'])}' width='40' style='border-radius:50%;'>", unsafe_allow_html=True)
-            c2.write(f"**{row['full_name']}**")
-            if c3.button("✏️", key=f"er_{row['id']}"): edit_reviewer_dialog(row['id'], row['username'], row['full_name'], engine, hash_password)
-            if c4.button("🗑️", key=f"dr_{row['id']}"): delete_item("reviewers", row['id'])
-
-    elif menu == "User Management":
-        st.header("🔑 System Admin Accounts")
-        st.divider()
-        with st.expander("➕ Add Admin"):
-            with st.form("add_admin", clear_on_submit=True):
-                u, n, p, r = st.text_input("Username*"), st.text_input("Full Name*"), st.text_input("Password*", type="password"), st.selectbox("Role", ["Admin", "Viewer"])
-                if st.form_submit_button("Create Account"):
-                    if u and p and n:
-                        with engine.begin() as conn:
-                            conn.execute(text("INSERT INTO users (username, full_name, role, password_hash) VALUES (:u, :n, :r, :p) ON CONFLICT DO NOTHING"), {"u": u.strip(), "n": n.strip(), "r": r, "p": hash_password(p)})
-                        st.cache_resource.clear(); st.success("✅ Admin Added!"); time.sleep(1); st.rerun()
-
-        st.divider()
-        df = pd.read_sql("SELECT id, username, full_name, role FROM users ORDER BY id ASC", engine)
-        for idx, row in df.iterrows():
             c1, c2 = st.columns([4, 1])
-            c1.write(f"👤 **{row['full_name']}**")
-            if row['username'] != st.session_state.get('username') and c2.button("🗑️", key=f"du_{row['id']}"): delete_item("users", row['id'])
+            c1.write(f"**{row['full_name']}** ({row['username']})")
+            if c2.button("🗑️", key=f"dr_{row['id']}"): delete_item("reviewers", row['id'])
