@@ -1,71 +1,126 @@
-import streamlit as st
-import bcrypt
+import os
 from sqlalchemy import create_engine, text
-from datetime import datetime, timedelta, timezone
+import bcrypt
+from datetime import datetime
+import pytz
 
-DB_URL = st.secrets["DATABASE_URL"]
+# --- 1. SETUP DATABASE ENGINE ---
+db_path = "rbs_database.db"
+engine = create_engine(f"sqlite:///{db_path}")
 
-@st.cache_resource
-def get_engine():
-    return create_engine(
-        DB_URL, 
-        pool_size=10, 
-        max_overflow=20, 
-        pool_pre_ping=True
-    )
+# --- 2. TIMEZONE CONFIGURATION ---
+def get_malaysia_time():
+    tz = pytz.timezone('Asia/Kuala_Lumpur')
+    return datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
 
-engine = get_engine()
-
+# --- 3. PASSWORD HASHING ---
 def hash_password(password):
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 def check_password(password, hashed):
-    try: 
-        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
-    except: 
-        return False
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-def get_malaysia_time():
-    my_tz = timezone(timedelta(hours=8))
-    return datetime.now(my_tz).strftime('%Y-%m-%d %H:%M:%S')
-
-def get_radio_index(prev_dict, key):
-    if not prev_dict: return None
-    val = prev_dict.get(key)
-    return 0 if val == "Yes" else (1 if val == "No" else None)
-
-def delete_item(table, item_id):
-    with engine.begin() as conn:
-        conn.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": item_id})
-    st.cache_resource.clear() # ---> TAMBAH BARIS INI
-    st.toast(f"Item deleted from {table}")
-    st.rerun()
-
-@st.cache_resource
+# --- 4. INITIALIZE TABLES ---
 def init_db():
     with engine.begin() as conn:
-        conn.execute(text("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(255) UNIQUE, full_name VARCHAR(255), password_hash VARCHAR(255), role VARCHAR(50))"))
-        conn.execute(text("CREATE TABLE IF NOT EXISTS reviewers (id SERIAL PRIMARY KEY, username VARCHAR(255) UNIQUE, full_name VARCHAR(255), password_hash VARCHAR(255))"))
-        conn.execute(text("CREATE TABLE IF NOT EXISTS applicants (id SERIAL PRIMARY KEY, name VARCHAR(255) UNIQUE, proposal_title TEXT, info_link TEXT, photo BYTEA)"))
+        # Table 1: Admins (Users)
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS reviews (
-                id SERIAL PRIMARY KEY, reviewer_username VARCHAR(255), applicant_name VARCHAR(255), 
-                responses TEXT, final_recommendation VARCHAR(50), overall_justification TEXT, 
-                submitted_at TIMESTAMP, updated_at TIMESTAMP, is_final BOOLEAN DEFAULT FALSE
-            )
-        """))
-        # ---> NEW TABLE: APPLICANT ASSIGNMENTS <---
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS applicant_assignments (
-                id SERIAL PRIMARY KEY,
-                applicant_name VARCHAR(255),
-                reviewer_username VARCHAR(255),
-                UNIQUE(applicant_name, reviewer_username)
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                full_name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                password_hash TEXT NOT NULL
             )
         """))
         
-        res = conn.execute(text("SELECT COUNT(*) FROM users")).fetchone()[0]
-        if res == 0:
-            conn.execute(text("INSERT INTO users (username, full_name, role, password_hash) VALUES ('admin', 'Master Admin', 'Admin', :pw)"), 
-                         {"pw": hash_password("Admin123!")})
-    return True
+        # Table 2: Reviewers
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS reviewers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                full_name TEXT NOT NULL,
+                password_hash TEXT NOT NULL
+            )
+        """))
+
+        # Table 3: Applicants
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS applicants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                proposal_title TEXT NOT NULL,
+                institution TEXT,
+                info_link TEXT,
+                remarks TEXT,
+                photo BLOB
+            )
+        """))
+
+        # Table 4: Phase 1 Assignments (Shortlisting)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS applicant_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                applicant_name TEXT NOT NULL,
+                reviewer_username TEXT NOT NULL,
+                UNIQUE(applicant_name, reviewer_username)
+            )
+        """))
+
+        # Table 5: Phase 1 Reviews
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reviewer_username TEXT NOT NULL,
+                applicant_name TEXT NOT NULL,
+                responses TEXT,
+                final_recommendation TEXT,
+                overall_justification TEXT,
+                is_final BOOLEAN DEFAULT FALSE,
+                submitted_at TEXT,
+                updated_at TEXT,
+                UNIQUE(reviewer_username, applicant_name)
+            )
+        """))
+
+        # --- BAHARU: JADUAL UNTUK FASA 2 ---
+        
+        # Table 6: Phase 2 Assignments (Winner Selection)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS phase2_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                applicant_name TEXT NOT NULL,
+                reviewer_username TEXT NOT NULL,
+                UNIQUE(applicant_name, reviewer_username)
+            )
+        """))
+
+        # Table 7: Phase 2 Reviews (Pemarkahan 1-10)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS phase2_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reviewer_username TEXT NOT NULL,
+                applicant_name TEXT NOT NULL,
+                responses TEXT,
+                final_recommendation TEXT,
+                overall_justification TEXT,
+                is_final BOOLEAN DEFAULT FALSE,
+                submitted_at TEXT,
+                updated_at TEXT,
+                UNIQUE(reviewer_username, applicant_name)
+            )
+        """))
+
+        # Create default admin if not exists
+        check_admin = conn.execute(text("SELECT * FROM users WHERE username = 'admin'")).fetchone()
+        if not check_admin:
+            default_hash = hash_password("admin123")
+            conn.execute(text("""
+                INSERT INTO users (username, full_name, role, password_hash) 
+                VALUES ('admin', 'System Administrator', 'Admin', :h)
+            """), {"h": default_hash})
+
+# --- 5. DELETE HELPER ---
+def delete_item(table, item_id):
+    with engine.begin() as conn:
+        conn.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": item_id})
