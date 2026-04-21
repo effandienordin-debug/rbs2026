@@ -305,7 +305,7 @@ def render_management(menu, engine, hash_password, delete_item):
             with st.container(border=True):
                 c1, c2, c3 = st.columns([4, 3, 2])
                 c1.write(f"**{idx + 1}. {app_name}**")
-                c1.caption(f"🏫 {row['institution'] if row['institution']} | {row['proposal_title']}")
+                c1.caption(f"🏫 {row['institution'] if row['institution'] else 'N/A'} | {row['proposal_title']}")
                 
                 current_assigned = assign_df[assign_df['applicant_name'] == app_name]['reviewer_username'].tolist()
                 selected_revs = c2.multiselect("Assign Reviewers:", options=reviewer_options, default=current_assigned, format_func=lambda x: f"{reviewer_map.get(x, x)} ({x})", key=f"p1_as_{app_name}")
