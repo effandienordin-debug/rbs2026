@@ -18,7 +18,8 @@ def get_local_image_base64(username):
             return f"data:image/png;base64,{b64}"
     return "https://cdn-icons-png.flaticon.com/512/149/149071.png"
 
-# --- 2. DIALOGS (EDIT & BULK) ---
+# --- 2. DIALOGS (APPLICANTS & REVIEWERS) ---
+
 @st.dialog("📝 Edit Applicant")
 def edit_applicant_dialog(engine, app_data):
     with st.form("edit_app_form"):
@@ -27,13 +28,26 @@ def edit_applicant_dialog(engine, app_data):
         new_inst = st.text_input("Institution", value=app_data['institution'])
         new_link = st.text_input("Info Link", value=app_data['info_link'])
         new_rem = st.text_area("Admin Remarks", value=app_data['remarks'])
-        
-        if st.form_submit_button("Update Details", type="primary"):
+        if st.form_submit_button("Update Applicant", type="primary"):
             with engine.begin() as conn:
-                conn.execute(text("""
-                    UPDATE applicants SET name=:n, proposal_title=:t, institution=:i, info_link=:l, remarks=:r 
-                    WHERE id=:id
-                """), {"n":new_name, "t":new_title, "i":new_inst, "l":new_link, "r":new_rem, "id":app_data['id']})
+                conn.execute(text("UPDATE applicants SET name=:n, proposal_title=:t, institution=:i, info_link=:l, remarks=:r WHERE id=:id"),
+                             {"n":new_name, "t":new_title, "i":new_inst, "l":new_link, "r":new_rem, "id":app_data['id']})
+            st.cache_resource.clear(); st.success("✅ Updated!"); time.sleep(1); st.rerun()
+
+@st.dialog("📝 Edit Evaluator")
+def edit_reviewer_dialog(engine, rev_data, hash_password):
+    with st.form("edit_rev_form"):
+        new_name = st.text_input("Full Name", value=rev_data['full_name'])
+        new_user = st.text_input("Username", value=rev_data['username'], disabled=True) # Username takleh tukar sebab link ke data assignment
+        new_pass = st.text_input("New Password (Leave blank to keep current)", type="password")
+        if st.form_submit_button("Update Evaluator", type="primary"):
+            with engine.begin() as conn:
+                if new_pass.strip():
+                    conn.execute(text("UPDATE reviewers SET full_name=:n, password_hash=:p WHERE id=:id"),
+                                 {"n":new_name, "p":hash_password(new_pass), "id":rev_data['id']})
+                else:
+                    conn.execute(text("UPDATE reviewers SET full_name=:n WHERE id=:id"),
+                                 {"n":new_name, "id":rev_data['id']})
             st.cache_resource.clear(); st.success("✅ Updated!"); time.sleep(1); st.rerun()
 
 @st.dialog("📚 Bulk Add Applicants")
@@ -42,15 +56,13 @@ def bulk_add_applicants_dialog(engine):
     raw_data = st.text_area("Paste Applicant List Here", height=200)
     if st.button("Import Applicants", type="primary"):
         lines = [line.strip() for line in raw_data.split('\n') if line.strip()]
-        count = 0
         with engine.begin() as conn:
             for line in lines:
                 parts = [p.strip() for p in line.split(',')]
                 if len(parts) >= 2:
                     conn.execute(text("INSERT INTO applicants (name, proposal_title, institution, info_link, remarks) VALUES (:n, :t, :i, :l, :r) ON CONFLICT (name) DO NOTHING"), 
                                  {"n":parts[0], "t":parts[1], "i":parts[2] if len(parts)>2 else "", "l":parts[3] if len(parts)>3 else "", "r":parts[4] if len(parts)>4 else ""})
-                    count += 1
-        st.cache_resource.clear(); st.success(f"✅ Imported {count}!"); time.sleep(1); st.rerun()
+        st.cache_resource.clear(); st.success("✅ Done!"); time.sleep(1); st.rerun()
 
 @st.dialog("📚 Bulk Add Reviewers")
 def bulk_add_reviewers_dialog(engine, hash_password):
@@ -72,26 +84,25 @@ def render_dashboard(engine):
     
     revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
     
-    # Ambil data assignment & review (Guna strip() untuk elak isu 0/0)
+    # --- PHASE 1 STATUS ---
+    st.subheader("📋 Phase 1: Shortlisting Status")
     assign_p1 = pd.read_sql("SELECT reviewer_username FROM applicant_assignments", engine)
     reviews_p1 = pd.read_sql("SELECT reviewer_username FROM reviews", engine)
     
-    # --- PHASE 1 STATUS ---
-    st.subheader("📋 Phase 1: Shortlisting Status")
     if not revs_df.empty:
         cols = st.columns(4)
         for i, row in revs_df.iterrows():
-            u, f = row['username'], row['full_name']
-            # Kod kebal: strip space & lowercase untuk matching tepat
-            assigned = len(assign_p1[assign_p1['reviewer_username'].str.strip().str.lower() == u.strip().lower()])
-            done = len(reviews_p1[reviews_p1['reviewer_username'].str.strip().str.lower() == u.strip().lower()])
+            u, f = row['username'].strip().lower(), row['full_name']
+            # Kod matching yang lebih 'kebal'
+            assigned = len(assign_p1[assign_p1['reviewer_username'].str.strip().str.lower() == u])
+            done = len(reviews_p1[reviews_p1['reviewer_username'].str.strip().str.lower() == u])
             bg = "#E6FFFA" if (done >= assigned and assigned > 0) else "#FFFBEB"
             with cols[i % 4]:
                 st.markdown(f"<div style='background-color:{bg}; padding:10px; border-radius:5px; border:1px solid #ddd; margin-bottom:10px;'><strong>{f}</strong><br>{done}/{assigned} Done</div>", unsafe_allow_html=True)
 
     st.divider()
     # --- PHASE 2 RANKING ---
-    st.subheader("🏁 Phase 2: Leaderboard")
+    st.subheader("🏁 Phase 2: Winner Selection Leaderboard")
     p2_reviews = pd.read_sql("SELECT applicant_name, responses FROM phase2_reviews", engine)
     if not p2_reviews.empty:
         ld = []
@@ -104,7 +115,7 @@ def render_dashboard(engine):
             df_ld = pd.DataFrame(ld).groupby("Applicant")["Score"].mean().sort_values(ascending=False).reset_index()
             df_ld.index += 1
             st.table(df_ld)
-    else: st.info("Waiting for Phase 2 marks...")
+    else: st.info("No Phase 2 scores yet.")
 
 # --- 4. RENDER MANAGEMENT ---
 def render_management(menu, engine, hash_password, delete_item):
@@ -123,7 +134,7 @@ def render_management(menu, engine, hash_password, delete_item):
                     if n and t:
                         with engine.begin() as conn:
                             conn.execute(text("INSERT INTO applicants (name, proposal_title, institution, info_link, remarks) VALUES (:n, :t, :i, :l, :r)"), {"n":n, "t":t, "i":i, "l":l, "r":r})
-                        st.success("✅ Added!"); time.sleep(1); st.rerun()
+                        st.cache_resource.clear(); st.success("✅ Added!"); time.sleep(1); st.rerun()
 
         revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
         assign_df = pd.read_sql("SELECT * FROM applicant_assignments", engine)
@@ -137,11 +148,11 @@ def render_management(menu, engine, hash_password, delete_item):
                 cb.caption(f"{row['institution']} | {row['proposal_title']}")
                 
                 ced1, ced2 = cc.columns(2)
-                if ced1.button("📝 Edit", key=f"ed_{row['id']}"): edit_applicant_dialog(engine, row)
-                if ced2.button("🗑️", key=f"del_{row['id']}"): delete_item("applicants", row['id'])
+                if ced1.button("📝 Edit", key=f"ed_ap_{row['id']}"): edit_applicant_dialog(engine, row)
+                if ced2.button("🗑️", key=f"del_ap_{row['id']}"): delete_item("applicants", row['id'])
                 
                 curr = assign_df[assign_df['applicant_name'] == row['name']]['reviewer_username'].tolist()
-                sel = st.multiselect("Assign Phase 1 Reviewers:", options=list(rev_map.keys()), default=curr, format_func=lambda x: rev_map.get(x), key=f"p1_sel_{row['id']}")
+                sel = st.multiselect("Assign Reviewers:", options=list(rev_map.keys()), default=curr, format_func=lambda x: rev_map.get(x), key=f"p1_sel_{row['id']}")
                 if st.button("💾 Save Assignment", key=f"p1_sv_{row['id']}"):
                     with engine.begin() as conn:
                         conn.execute(text("DELETE FROM applicant_assignments WHERE applicant_name = :a"), {"a":row['name']})
@@ -162,7 +173,6 @@ def render_management(menu, engine, hash_password, delete_item):
                 c1, c2 = st.columns([3, 1])
                 c1.write(f"**{idx+1}. {row['name']}**")
                 
-                # Live scores display
                 sc_df = pd.read_sql(text("SELECT reviewer_username, responses, final_recommendation FROM phase2_reviews WHERE applicant_name = :n"), engine, params={"n":row['name']})
                 for _, s in sc_df.iterrows():
                     try:
@@ -171,7 +181,7 @@ def render_management(menu, engine, hash_password, delete_item):
                     except: continue
 
                 curr_p2 = assign_p2[assign_p2['applicant_name']==row['name']]['reviewer_username'].tolist()
-                sel_p2 = st.multiselect("Assign Phase 2:", options=list(rev_map.keys()), default=curr_p2, format_func=lambda x: rev_map.get(x), key=f"p2_sel_{row['id']}")
+                sel_p2 = st.multiselect("Assign Reviewers (Phase 2):", options=list(rev_map.keys()), default=curr_p2, format_func=lambda x: rev_map.get(x), key=f"p2_sel_{row['id']}")
                 if c2.button("💾 Save", key=f"p2_sv_{row['id']}"):
                     with engine.begin() as conn:
                         conn.execute(text("DELETE FROM phase2_assignments WHERE applicant_name = :a"), {"a":row['name']})
@@ -187,13 +197,18 @@ def render_management(menu, engine, hash_password, delete_item):
             with st.form("add_rev_form", clear_on_submit=True):
                 n, u, p = st.text_input("Full Name"), st.text_input("Username"), st.text_input("Password", type="password")
                 if st.form_submit_button("Save Evaluator"):
-                    with engine.begin() as conn:
-                        conn.execute(text("INSERT INTO reviewers (username, full_name, password_hash) VALUES (:u, :n, :p) ON CONFLICT DO NOTHING"), {"u":u.strip(), "n":n.strip(), "p":hash_password(p)})
-                    st.cache_resource.clear(); st.success("✅ Added!"); st.rerun()
+                    if n and u and p:
+                        with engine.begin() as conn:
+                            conn.execute(text("INSERT INTO reviewers (username, full_name, password_hash) VALUES (:u, :n, :p) ON CONFLICT DO NOTHING"), {"u":u.strip(), "n":n.strip(), "p":hash_password(p)})
+                        st.cache_resource.clear(); st.success("✅ Added!"); time.sleep(1); st.rerun()
 
         revs = pd.read_sql("SELECT * FROM reviewers ORDER BY id ASC", engine)
         for _, r in revs.iterrows():
             with st.container(border=True):
-                ca, cb = st.columns([4, 1])
+                ca, cb = st.columns([4, 1.2])
                 ca.write(f"**{r['full_name']}** ({r['username']})")
-                if cb.button("🗑️", key=f"del_rev_{r['id']}"): delete_item("reviewers", r['id'])
+                
+                # --- BUTANG EDIT UNTUK REVIEWER ---
+                ced1, ced2 = cb.columns(2)
+                if ced1.button("📝", key=f"ed_rev_{r['id']}"): edit_reviewer_dialog(engine, r, hash_password)
+                if ced2.button("🗑️", key=f"del_rev_{r['id']}"): delete_item("reviewers", r['id'])
