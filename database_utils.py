@@ -28,13 +28,13 @@ def hash_password(password):
 def check_password(password, hashed):
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-# --- 4. INITIALIZE TABLES ---
+# --- 4. INITIALIZE TABLES (POSTGRESQL / SUPABASE VERSION) ---
 def init_db():
     with engine.begin() as conn:
         # Table 1: Admins (Users)
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
                 full_name TEXT NOT NULL,
                 role TEXT NOT NULL,
@@ -45,7 +45,7 @@ def init_db():
         # Table 2: Reviewers
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS reviewers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
                 full_name TEXT NOT NULL,
                 password_hash TEXT NOT NULL
@@ -53,22 +53,23 @@ def init_db():
         """))
 
         # Table 3: Applicants
+        # Nota: PostgreSQL guna BYTEA untuk simpan fail/gambar (bukan BLOB)
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS applicants (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT UNIQUE NOT NULL,
                 proposal_title TEXT NOT NULL,
                 institution TEXT,
                 info_link TEXT,
                 remarks TEXT,
-                photo BLOB
+                photo BYTEA
             )
         """))
 
         # Table 4: Phase 1 Assignments (Shortlisting)
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS applicant_assignments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 applicant_name TEXT NOT NULL,
                 reviewer_username TEXT NOT NULL,
                 UNIQUE(applicant_name, reviewer_username)
@@ -78,7 +79,7 @@ def init_db():
         # Table 5: Phase 1 Reviews
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS reviews (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 reviewer_username TEXT NOT NULL,
                 applicant_name TEXT NOT NULL,
                 responses TEXT,
@@ -96,7 +97,7 @@ def init_db():
         # Table 6: Phase 2 Assignments (Winner Selection)
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS phase2_assignments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 applicant_name TEXT NOT NULL,
                 reviewer_username TEXT NOT NULL,
                 UNIQUE(applicant_name, reviewer_username)
@@ -106,7 +107,7 @@ def init_db():
         # Table 7: Phase 2 Reviews (Pemarkahan 1-10)
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS phase2_reviews (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 reviewer_username TEXT NOT NULL,
                 applicant_name TEXT NOT NULL,
                 responses TEXT,
@@ -132,6 +133,7 @@ def init_db():
 def delete_item(table, item_id):
     with engine.begin() as conn:
         conn.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": item_id})
+
 # --- HELPER FUNCTION UNTUK BORANG FASA 1 ---
 def get_radio_index(options, value):
     """Cari index untuk nilai radio button/selectbox dari jawapan lama"""
