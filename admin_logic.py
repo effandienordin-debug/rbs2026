@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import time
 import base64
-import json  # Penting untuk baca markah dalam JSON
+import json
 from sqlalchemy import text
 
 # --- LOCAL STORAGE SETUP ---
@@ -15,7 +15,8 @@ def get_local_image_base64(username):
     if os.path.exists(file_path):
         with open(file_path, "rb") as img_file:
             b64 = base64.b64encode(img_file.read()).decode()
-            return f:data:image/png;base64,{b64}
+            # PEMBETULAN: Ditambah pengikat kata (") yang tertinggal tadi
+            return f"data:image/png;base64,{b64}"
     return "https://cdn-icons-png.flaticon.com/512/149/149071.png"
 
 # --- 1. DIALOGS FOR BULK ADDING & EDITING ---
@@ -86,7 +87,6 @@ def render_dashboard(engine):
     p2_reviews = pd.read_sql("SELECT applicant_name, responses FROM phase2_reviews", engine)
     
     if not p2_reviews.empty:
-        # Ekstrak markah dari JSON
         leaderboard_data = []
         for _, r_row in p2_reviews.iterrows():
             try:
@@ -99,10 +99,9 @@ def render_dashboard(engine):
         
         if leaderboard_data:
             ld_df = pd.DataFrame(leaderboard_data)
-            # Kira purata markah jika lebih dari satu penilai
             final_ld = ld_df.groupby("Applicant")["Score"].mean().reset_index()
             final_ld = final_ld.sort_values(by="Score", ascending=False).reset_index(drop=True)
-            final_ld.index += 1 # Ranking bermula 1
+            final_ld.index += 1
             st.table(final_ld)
         else:
             st.info("Waiting for Phase 2 scores...")
@@ -152,7 +151,6 @@ def render_management(menu, engine, hash_password, delete_item):
                     c1.write(f"**{idx+1}. {app_name}**")
                     c1.caption(f"🏫 {row['institution'] if row['institution'] else 'N/A'}")
                     
-                    # --- PAPARAN MARKAH LIVE ---
                     scores_df = pd.read_sql(text("SELECT reviewer_username, responses, final_recommendation FROM phase2_reviews WHERE applicant_name = :n"), engine, params={"n": app_name})
                     if not scores_df.empty:
                         for _, s_row in scores_df.iterrows():
@@ -166,32 +164,5 @@ def render_management(menu, engine, hash_password, delete_item):
                     else:
                         st.caption("No scores submitted yet.")
 
-                    # --- ASSIGNMENT LOGIC ---
                     curr = assign_p2[assign_p2['applicant_name'] == app_name]['reviewer_username'].tolist()
-                    sel = c1.multiselect("Assign Phase 2 Reviewers:", options=list(rev_map.keys()), default=curr, format_func=lambda x: rev_map.get(x), key=f"p2_{app_name}")
-                    if c2.button("💾 Save", key=f"s2_{app_name}"):
-                        with engine.begin() as conn:
-                            conn.execute(text("DELETE FROM phase2_assignments WHERE applicant_name = :a"), {"a": app_name})
-                            for r in sel:
-                                conn.execute(text("INSERT INTO phase2_assignments (applicant_name, reviewer_username) VALUES (:a, :r)"), {"a": app_name, "r": r})
-                        st.success("Saved!"); time.sleep(0.5); st.rerun()
-
-    elif menu == "Reviewer Management":
-        st.header("👤 Evaluator Management")
-        with st.expander("➕ Add Single Evaluator"):
-            with st.form("add_rev", clear_on_submit=True):
-                n, u, p = st.text_input("Name"), st.text_input("Username"), st.text_input("Password", type="password")
-                if st.form_submit_button("Save Evaluator"):
-                    if n and u and p:
-                        try:
-                            with engine.begin() as conn:
-                                conn.execute(text("INSERT INTO reviewers (username, full_name, password_hash) VALUES (:u, :n, :p)"), {"u": u.strip(), "n": n.strip(), "p": hash_password(p)})
-                            st.cache_resource.clear(); st.success("Added!"); time.sleep(1); st.rerun()
-                        except Exception as e:
-                            st.error(f"Error: {e}")
-
-        df = pd.read_sql("SELECT id, username, full_name FROM reviewers ORDER BY id ASC", engine)
-        for idx, row in df.iterrows():
-            c1, c2 = st.columns([4, 1])
-            c1.write(f"**{row['full_name']}** ({row['username']})")
-            if c2.button("🗑️", key=f"dr_{row['id']}"): delete_item("reviewers", row['id'])
+                    sel = c1.multiselect("Assign Phase 2 Reviewers:", options=list(rev_
