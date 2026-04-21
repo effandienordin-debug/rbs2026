@@ -396,17 +396,42 @@ def render_management(menu, engine, hash_password, delete_item):
         if st.button("📚 Bulk Add Reviewers"): bulk_add_reviewers_dialog(engine, hash_password)
 
         with st.expander("➕ Add Single Evaluator"):
-            with st.form("add_rev", clear_on_submit=True):
-                r_name, r_user, r_pass = st.text_input("Full Name*"), st.text_input("Username*"), st.text_input("Password*", type="password") 
-                e_file = st.file_uploader("Photo (Optional)", type=['png', 'jpg'])
-                if st.form_submit_button("Save Evaluator"):
-                    if r_name and r_user and r_pass:
-                        with engine.begin() as conn:
-                            conn.execute(text("INSERT INTO reviewers (username, full_name, password_hash) VALUES (:u, :n, :p) ON CONFLICT DO NOTHING"), {"u": r_user.strip(), "n": r_name.strip(), "p": hash_password(r_pass)})
-                        if e_file:
-                            save_path = os.path.join(PHOTO_DIR, f"{r_user.strip().replace(' ', '_')}.png")
-                            with open(save_path, "wb") as f: f.write(e_file.getvalue())
-                        st.cache_resource.clear(); st.success("✅ Evaluator Added!"); time.sleep(1); st.rerun()
+    with st.form("add_rev", clear_on_submit=True):
+        r_name = st.text_input("Full Name*")
+        r_user = st.text_input("Username*")
+        r_pass = st.text_input("Password*", type="password") 
+        e_file = st.file_uploader("Photo (Optional)", type=['png', 'jpg'])
+        
+        if st.form_submit_button("Save Evaluator", type="primary"):
+            if r_name and r_user and r_pass:
+                try:
+                    with engine.begin() as conn:
+                        # Buang ON CONFLICT DO NOTHING supaya kita nampak ralat jika username bertindih
+                        conn.execute(text("""
+                            INSERT INTO reviewers (username, full_name, password_hash) 
+                            VALUES (:u, :n, :p)
+                        """), {
+                            "u": r_user.strip(), 
+                            "n": r_name.strip(), 
+                            "p": hash_password(r_pass)
+                        })
+                    
+                    # Simpan gambar jika ada
+                    if e_file:
+                        save_path = os.path.join(PHOTO_DIR, f"{r_user.strip().replace(' ', '_')}.png")
+                        with open(save_path, "wb") as f:
+                            f.write(e_file.getvalue())
+                    
+                    st.cache_resource.clear() # Bersihkan cache supaya senarai baru muncul
+                    st.success(f"✅ Evaluator {r_name} berjaya didaftarkan!")
+                    time.sleep(1)
+                    st.rerun() # Paksa Streamlit refresh skrin
+                    
+                except Exception as e:
+                    # Paparkan ralat sebenar jika gagal (contoh: Username dah wujud)
+                    st.error(f"🚨 Gagal menambah penilai: {str(e)}")
+            else:
+                st.warning("⚠️ Sila isi semua ruangan bertanda *")
 
         st.divider()
         df = pd.read_sql("SELECT id, username, full_name FROM reviewers ORDER BY id ASC", engine)
