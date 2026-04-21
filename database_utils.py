@@ -132,3 +132,9 @@ def init_db():
 def delete_item(table, item_id):
     with engine.begin() as conn:
         conn.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": item_id})
+# --- HELPER FUNCTION UNTUK BORANG FASA 1 ---
+def get_radio_index(options, value):
+    """Cari index untuk nilai radio button/selectbox dari jawapan lama"""
+    if value in options:
+        return options.index(value)
+    return 0 # Default kepada pilihan pertama (index 0) jika tiada
