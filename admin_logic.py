@@ -15,7 +15,7 @@ def get_local_image_base64(username):
     if os.path.exists(file_path):
         with open(file_path, "rb") as img_file:
             b64 = base64.b64encode(img_file.read()).decode()
-            # PEMBETULAN: Ditambah pengikat kata (") yang tertinggal tadi
+            # PEMBETULAN: Pastikan ada pembuka dan penutup kata (")
             return f"data:image/png;base64,{b64}"
     return "https://cdn-icons-png.flaticon.com/512/149/149071.png"
 
@@ -42,7 +42,9 @@ def bulk_add_applicants_dialog(engine):
                     conn.execute(text("INSERT INTO applicants (name, proposal_title, institution, info_link, remarks) VALUES (:n, :t, :i, :l, :r) ON CONFLICT (name) DO NOTHING"), {"n": app, "t": title, "i": inst, "l": link, "r": rem})
                     count += 1
         st.cache_resource.clear()
-        st.success(f"✅ Imported {count} applicants!"); time.sleep(1); st.rerun()
+        st.success(f"✅ Imported {count} applicants!")
+        time.sleep(1)
+        st.rerun()
 
 @st.dialog("📚 Bulk Add Reviewers")
 def bulk_add_reviewers_dialog(engine, hash_password):
@@ -57,12 +59,17 @@ def bulk_add_reviewers_dialog(engine, hash_password):
                 if len(parts) >= 3:
                     conn.execute(text("INSERT INTO reviewers (username, full_name, password_hash) VALUES (:u, :n, :p) ON CONFLICT (username) DO NOTHING"), {"u": parts[1], "n": parts[0], "p": hash_password(parts[2])})
                     count += 1
-        st.cache_resource.clear(); st.success(f"✅ Imported {count} reviewers!"); time.sleep(1); st.rerun()
+        st.cache_resource.clear()
+        st.success(f"✅ Imported {count} reviewers!")
+        time.sleep(1)
+        st.rerun()
 
 # --- 2. RENDER DASHBOARD ---
 def render_dashboard(engine):
     st.header("📊 Live Evaluation Tracker")
-    if st.button("🔄 Sync Dashboard Data"): st.cache_resource.clear(); st.rerun()
+    if st.button("🔄 Sync Dashboard Data"):
+        st.cache_resource.clear()
+        st.rerun()
         
     revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
     
@@ -79,11 +86,11 @@ def render_dashboard(engine):
             done = len(reviews_p1[reviews_p1['reviewer_username'] == u])
             bg = "#E6FFFA" if (done >= assigned and assigned > 0) else "#FFFBEB"
             with cols[i % 4]:
-                st.markdown(f"<div style='background-color:{bg}; padding:10px; border-radius:5px;'><strong>{f}</strong><br>{done}/{assigned} Done</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='background-color:{bg}; padding:10px; border-radius:5px;'><strong>{f}</strong><br>{done}/{assigned} Done</div>", unsafe_allow_allow_html=True)
 
     st.divider()
     # Phase 2 Ranking Leaderboard
-    st.subheader("🏁 Phase 2: Leaderboard (Ranking)")
+    st.subheader("🏁 Phase 2: Leaderboard (Average Score)")
     p2_reviews = pd.read_sql("SELECT applicant_name, responses FROM phase2_reviews", engine)
     
     if not p2_reviews.empty:
@@ -95,10 +102,12 @@ def render_dashboard(engine):
                     "Applicant": r_row['applicant_name'],
                     "Score": float(res.get('total_score', 0))
                 })
-            except: continue
+            except Exception:
+                continue
         
         if leaderboard_data:
             ld_df = pd.DataFrame(leaderboard_data)
+            # Kira purata jika ada lebih dari 1 penilai bagi satu pemohon
             final_ld = ld_df.groupby("Applicant")["Score"].mean().reset_index()
             final_ld = final_ld.sort_values(by="Score", ascending=False).reset_index(drop=True)
             final_ld.index += 1
@@ -112,7 +121,8 @@ def render_dashboard(engine):
 def render_management(menu, engine, hash_password, delete_item):
     if menu == "Phase 1 Management":
         st.header("📋 Phase 1: Shortlisting")
-        if st.button("📚 Bulk Add Applicants"): bulk_add_applicants_dialog(engine)
+        if st.button("📚 Bulk Add Applicants"):
+            bulk_add_applicants_dialog(engine)
         
         apps_df = pd.read_sql("SELECT * FROM applicants ORDER BY id ASC", engine)
         revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
@@ -131,10 +141,13 @@ def render_management(menu, engine, hash_password, delete_item):
                         conn.execute(text("DELETE FROM applicant_assignments WHERE applicant_name = :a"), {"a": row['name']})
                         for r in sel:
                             conn.execute(text("INSERT INTO applicant_assignments (applicant_name, reviewer_username) VALUES (:a, :r)"), {"a": row['name'], "r": r})
-                    st.success("Saved!"); time.sleep(0.5); st.rerun()
+                    st.success("Saved!")
+                    time.sleep(0.5)
+                    st.rerun()
 
     elif menu == "Phase 2 Management":
         st.header("🏆 Phase 2: Finalist Selection")
+        # Query dengan UPPER() supaya tak sensitif pada huruf
         finalists_df = pd.read_sql(text("SELECT DISTINCT a.id, a.name, a.proposal_title, a.institution FROM applicants a JOIN reviews r ON a.name = r.applicant_name WHERE UPPER(r.final_recommendation) = 'YES'"), engine)
         
         revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
@@ -151,6 +164,7 @@ def render_management(menu, engine, hash_password, delete_item):
                     c1.write(f"**{idx+1}. {app_name}**")
                     c1.caption(f"🏫 {row['institution'] if row['institution'] else 'N/A'}")
                     
+                    # --- PAPARAN MARKAH LIVE ---
                     scores_df = pd.read_sql(text("SELECT reviewer_username, responses, final_recommendation FROM phase2_reviews WHERE applicant_name = :n"), engine, params={"n": app_name})
                     if not scores_df.empty:
                         for _, s_row in scores_df.iterrows():
@@ -160,9 +174,43 @@ def render_management(menu, engine, hash_password, delete_item):
                                 rec = s_row['final_recommendation']
                                 rec_color = "green" if rec == "YES" else "red"
                                 st.markdown(f"⭐ **{s_row['reviewer_username']}**: :blue[{t_score:.1f}%] (:{rec_color}[{rec}])")
-                            except: continue
+                            except Exception:
+                                continue
                     else:
                         st.caption("No scores submitted yet.")
 
+                    # --- ASSIGNMENT LOGIC ---
                     curr = assign_p2[assign_p2['applicant_name'] == app_name]['reviewer_username'].tolist()
-                    sel = c1.multiselect("Assign Phase 2 Reviewers:", options=list(rev_
+                    sel = c1.multiselect("Assign Phase 2 Reviewers:", options=list(rev_map.keys()), default=curr, format_func=lambda x: rev_map.get(x), key=f"p2_{app_name}")
+                    if c2.button("💾 Save", key=f"s2_{app_name}"):
+                        with engine.begin() as conn:
+                            conn.execute(text("DELETE FROM phase2_assignments WHERE applicant_name = :a"), {"a": app_name})
+                            for r in sel:
+                                conn.execute(text("INSERT INTO phase2_assignments (applicant_name, reviewer_username) VALUES (:a, :r)"), {"a": app_name, "r": r})
+                        st.success("Saved!")
+                        time.sleep(0.5)
+                        st.rerun()
+
+    elif menu == "Reviewer Management":
+        st.header("👤 Evaluator Management")
+        with st.expander("➕ Add Single Evaluator"):
+            with st.form("add_rev", clear_on_submit=True):
+                n, u, p = st.text_input("Name"), st.text_input("Username"), st.text_input("Password", type="password")
+                if st.form_submit_button("Save Evaluator"):
+                    if n and u and p:
+                        try:
+                            with engine.begin() as conn:
+                                conn.execute(text("INSERT INTO reviewers (username, full_name, password_hash) VALUES (:u, :n, :p)"), {"u": u.strip(), "n": n.strip(), "p": hash_password(p)})
+                            st.cache_resource.clear()
+                            st.success("Added!")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
+        df = pd.read_sql("SELECT id, username, full_name FROM reviewers ORDER BY id ASC", engine)
+        for idx, row in df.iterrows():
+            c1, c2 = st.columns([4, 1])
+            c1.write(f"**{row['full_name']}** ({row['username']})")
+            if c2.button("🗑️", key=f"dr_{row['id']}"):
+                delete_item("reviewers", row['id'])
