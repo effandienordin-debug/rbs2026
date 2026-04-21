@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import time
 import base64
+import json  # Penting untuk baca markah dalam JSON
 from sqlalchemy import text
 
 # --- LOCAL STORAGE SETUP ---
@@ -14,7 +15,7 @@ def get_local_image_base64(username):
     if os.path.exists(file_path):
         with open(file_path, "rb") as img_file:
             b64 = base64.b64encode(img_file.read()).decode()
-            return f"data:image/png;base64,{b64}"
+            return f:data:image/png;base64,{b64}
     return "https://cdn-icons-png.flaticon.com/512/149/149071.png"
 
 # --- 1. DIALOGS FOR BULK ADDING & EDITING ---
@@ -80,20 +81,33 @@ def render_dashboard(engine):
                 st.markdown(f"<div style='background-color:{bg}; padding:10px; border-radius:5px;'><strong>{f}</strong><br>{done}/{assigned} Done</div>", unsafe_allow_html=True)
 
     st.divider()
-    # Phase 2 Status
-    st.subheader("🏆 Phase 2: Winner Selection Status")
-    assign_p2 = pd.read_sql("SELECT applicant_name, reviewer_username FROM phase2_assignments", engine)
-    reviews_p2 = pd.read_sql("SELECT reviewer_username, is_final FROM phase2_reviews", engine)
+    # Phase 2 Ranking Leaderboard
+    st.subheader("🏁 Phase 2: Leaderboard (Ranking)")
+    p2_reviews = pd.read_sql("SELECT applicant_name, responses FROM phase2_reviews", engine)
     
-    if not revs_df.empty:
-        cols2 = st.columns(4)
-        for i, row in revs_df.iterrows():
-            u, f = row['username'], row['full_name']
-            assigned = len(assign_p2[assign_p2['reviewer_username'] == u])
-            if assigned > 0:
-                done = len(reviews_p2[reviews_p2['reviewer_username'] == u])
-                with cols2[i % 4]:
-                    st.markdown(f"<div style='background-color:#F3E8FF; padding:10px; border-radius:5px;'><strong>{f}</strong><br>{done}/{assigned} Done</div>", unsafe_allow_html=True)
+    if not p2_reviews.empty:
+        # Ekstrak markah dari JSON
+        leaderboard_data = []
+        for _, r_row in p2_reviews.iterrows():
+            try:
+                res = json.loads(r_row['responses'])
+                leaderboard_data.append({
+                    "Applicant": r_row['applicant_name'],
+                    "Score": float(res.get('total_score', 0))
+                })
+            except: continue
+        
+        if leaderboard_data:
+            ld_df = pd.DataFrame(leaderboard_data)
+            # Kira purata markah jika lebih dari satu penilai
+            final_ld = ld_df.groupby("Applicant")["Score"].mean().reset_index()
+            final_ld = final_ld.sort_values(by="Score", ascending=False).reset_index(drop=True)
+            final_ld.index += 1 # Ranking bermula 1
+            st.table(final_ld)
+        else:
+            st.info("Waiting for Phase 2 scores...")
+    else:
+        st.info("No Phase 2 reviews submitted yet.")
 
 # --- 3. RENDER MANAGEMENT ---
 def render_management(menu, engine, hash_password, delete_item):
@@ -104,7 +118,6 @@ def render_management(menu, engine, hash_password, delete_item):
         apps_df = pd.read_sql("SELECT * FROM applicants ORDER BY id ASC", engine)
         revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
         assign_df = pd.read_sql("SELECT * FROM applicant_assignments", engine)
-        
         rev_map = dict(zip(revs_df['username'], revs_df['full_name']))
         
         for idx, row in apps_df.iterrows():
@@ -123,7 +136,6 @@ def render_management(menu, engine, hash_password, delete_item):
 
     elif menu == "Phase 2 Management":
         st.header("🏆 Phase 2: Finalist Selection")
-        # Query dengan UPPER() supaya tak sensitif pada huruf besar/kecil
         finalists_df = pd.read_sql(text("SELECT DISTINCT a.id, a.name, a.proposal_title, a.institution FROM applicants a JOIN reviews r ON a.name = r.applicant_name WHERE UPPER(r.final_recommendation) = 'YES'"), engine)
         
         revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
@@ -134,16 +146,34 @@ def render_management(menu, engine, hash_password, delete_item):
             st.warning("Belum ada pemohon yang lulus Fasa 1.")
         else:
             for idx, row in finalists_df.iterrows():
+                app_name = row['name']
                 with st.container(border=True):
                     c1, c2 = st.columns([3, 1])
-                    c1.write(f"**{row['name']}**")
-                    curr = assign_p2[assign_p2['applicant_name'] == row['name']]['reviewer_username'].tolist()
-                    sel = c1.multiselect("Assign Phase 2 Reviewers:", options=list(rev_map.keys()), default=curr, format_func=lambda x: rev_map.get(x), key=f"p2_{row['name']}")
-                    if c2.button("💾 Save", key=f"s2_{row['name']}"):
+                    c1.write(f"**{idx+1}. {app_name}**")
+                    c1.caption(f"🏫 {row['institution'] if row['institution'] else 'N/A'}")
+                    
+                    # --- PAPARAN MARKAH LIVE ---
+                    scores_df = pd.read_sql(text("SELECT reviewer_username, responses, final_recommendation FROM phase2_reviews WHERE applicant_name = :n"), engine, params={"n": app_name})
+                    if not scores_df.empty:
+                        for _, s_row in scores_df.iterrows():
+                            try:
+                                m_data = json.loads(s_row['responses'])
+                                t_score = m_data.get('total_score', 0)
+                                rec = s_row['final_recommendation']
+                                rec_color = "green" if rec == "YES" else "red"
+                                st.markdown(f"⭐ **{s_row['reviewer_username']}**: :blue[{t_score:.1f}%] (:{rec_color}[{rec}])")
+                            except: continue
+                    else:
+                        st.caption("No scores submitted yet.")
+
+                    # --- ASSIGNMENT LOGIC ---
+                    curr = assign_p2[assign_p2['applicant_name'] == app_name]['reviewer_username'].tolist()
+                    sel = c1.multiselect("Assign Phase 2 Reviewers:", options=list(rev_map.keys()), default=curr, format_func=lambda x: rev_map.get(x), key=f"p2_{app_name}")
+                    if c2.button("💾 Save", key=f"s2_{app_name}"):
                         with engine.begin() as conn:
-                            conn.execute(text("DELETE FROM phase2_assignments WHERE applicant_name = :a"), {"a": row['name']})
+                            conn.execute(text("DELETE FROM phase2_assignments WHERE applicant_name = :a"), {"a": app_name})
                             for r in sel:
-                                conn.execute(text("INSERT INTO phase2_assignments (applicant_name, reviewer_username) VALUES (:a, :r)"), {"a": row['name'], "r": r})
+                                conn.execute(text("INSERT INTO phase2_assignments (applicant_name, reviewer_username) VALUES (:a, :r)"), {"a": app_name, "r": r})
                         st.success("Saved!"); time.sleep(0.5); st.rerun()
 
     elif menu == "Reviewer Management":
