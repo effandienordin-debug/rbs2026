@@ -3,10 +3,18 @@ from sqlalchemy import create_engine, text
 import bcrypt
 from datetime import datetime
 import pytz
+import streamlit as st
 
-# --- 1. SETUP DATABASE ENGINE ---
-db_path = "rbs_database.db"
-engine = create_engine(f"sqlite:///{db_path}")
+# --- 1. SETUP DATABASE ENGINE (SUPABASE) ---
+# Sistem akan panggil connection rahsia dari Streamlit Cloud
+db_url = st.secrets["SUPABASE_URL"]
+
+# Jika guna Supabase/PostgreSQL, kadang-kadang URL mula dengan postgres://
+# SQLAlchemy perlukan postgresql:// jadi kita ganti secara automatik
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(db_url)
 
 # --- 2. TIMEZONE CONFIGURATION ---
 def get_malaysia_time():
