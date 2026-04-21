@@ -113,7 +113,7 @@ def render_review_form(engine, get_malaysia_time, phase, render_evaluation_field
                                 if row['name'] in reviews_lookup:
                                     r_data = reviews_lookup[row['name']]
                                     rec = r_data['final_recommendation']
-                                    color = "green" if rec == "Yes" or rec == "YES" else "red"
+                                    color = "green" if rec == "YES" else "red"
                                     st.markdown(f"**Status:** :green[✅ Saved]")
                                     st.markdown(f"**Recommendation:** :{color}[{rec}]")
 
