@@ -348,10 +348,10 @@ def render_management(menu, engine, hash_password, delete_item):
 
         # Dapatkan senarai FINALIST (Dapat 'YES' dari mana-mana penilai Fasa 1)
         finalists_query = text("""
-            SELECT DISTINCT a.id, a.name, a.proposal_title, a.institution
-            FROM applicants a
-            JOIN reviews r ON a.name = r.applicant_name
-            WHERE r.final_recommendation = 'YES'
+        SELECT DISTINCT a.id, a.name, a.proposal_title, a.institution
+        FROM applicants a
+        JOIN reviews r ON a.name = r.applicant_name
+        WHERE UPPER(r.final_recommendation) = 'YES'
         """)
         finalists_df = pd.read_sql(finalists_query, engine)
         
