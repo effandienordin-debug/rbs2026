@@ -55,14 +55,15 @@ def render_review_form(engine, get_malaysia_time, phase, render_evaluation_field
             if app['remarks']: col_txt.info(f"**Admin Remarks:** {app['remarks']}")
             col_txt.markdown(f"🔗 [View Documents]({app['info_link']})")
 
-        with st.form("eval_form"):
-            # Pilih borang berdasarkan fasa
-            if phase == 1:
-                res = render_evaluation_fields(prev_resp, rev.iloc[0].to_dict() if not rev.empty else {}, disabled=is_locked)
-            else:
-                res = render_scoring_fields(prev_resp, rev.iloc[0].to_dict() if not rev.empty else {}, disabled=is_locked)
+        # --- EVALUATION FORM ---
+        if phase == 1:
+            res = render_evaluation_fields(prev_resp, rev.iloc[0].to_dict() if not rev.empty else {}, disabled=is_locked)
+        else:
+            res = render_scoring_fields(prev_resp, rev.iloc[0].to_dict() if not rev.empty else {}, disabled=is_locked)
 
-            if not is_locked and st.form_submit_button("💾 Save Draft", use_container_width=True, type="primary"):
+        # BUTTONS (Dikeluarkan dari form untuk fleksibiliti)
+        if not is_locked:
+            if st.button("💾 Save Draft", use_container_width=True, type="primary"):
                 is_incomplete = False
                 if phase == 1:
                     mandatory_codes = ["12a", "12b", "12c", "14a", "14b", "16a", "18a"]
@@ -80,10 +81,15 @@ def render_review_form(engine, get_malaysia_time, phase, render_evaluation_field
                         else:
                             conn.execute(text(f"INSERT INTO {table_reviews} (reviewer_username, applicant_name, responses, final_recommendation, overall_justification, submitted_at, updated_at) VALUES (:u, :a, :r, :fr, :oj, :t, :t)"),
                                          {"u":st.session_state.username, "a":name, "r":json.dumps(res["responses"]), "fr":res["recommendation"], "oj":res["justification"], "t":get_malaysia_time()})
-                    st.cache_resource.clear(); st.session_state.active_review_app = None; st.rerun()
+                    
+                    st.cache_resource.clear()
+                    st.toast("✅ Draft saved!")
+                    st.success("Draft updated. You can continue editing or go back manually.")
+                    st.rerun() # Stay on the page
 
         if st.button("⬅️ Back to Gallery", use_container_width=True):
-            st.session_state.active_review_app = None; st.rerun()
+            st.session_state.active_review_app = None
+            st.rerun()
             
     else:
         # --- GALLERY VIEW ---
@@ -92,7 +98,7 @@ def render_review_form(engine, get_malaysia_time, phase, render_evaluation_field
         if apps.empty:
             st.info(f"You currently have no applicants assigned to you for {phase_name}.")
         else:
-            rev_records = pd.read_sql(text(f"SELECT applicant_name, final_recommendation, overall_justification FROM {table_reviews} WHERE reviewer_username = :u"),
+            rev_records = pd.read_sql(text(f"SELECT applicant_name, responses, final_recommendation, overall_justification FROM {table_reviews} WHERE reviewer_username = :u"),
                                       engine, params={"u": st.session_state.username})
             reviews_lookup = rev_records.set_index('applicant_name').to_dict('index')
 
@@ -117,15 +123,22 @@ def render_review_form(engine, get_malaysia_time, phase, render_evaluation_field
                                     st.markdown(f"**Status:** :green[✅ Saved]")
                                     st.markdown(f"**Recommendation:** :{color}[{rec}]")
 
+                                    # --- TAMBAH INI: Papar Markah Fasa 2 dalam Gallery ---
+                                    if phase == 2:
+                                        try:
+                                            res_data = json.loads(r_data.get('responses', '{}'))
+                                            total = res_data.get('total_score', 0)
+                                            st.markdown(f"**Total Score:** :blue[{total:.1f}%]")
+                                        except: pass
+
                                     justification = r_data.get('overall_justification')
                                     if justification: st.caption(f"**💬 Comments:** {justification[:50]}...")
-                                    else: st.caption("**💬 Comments:** Tiada ulasan.")
                                 else:
                                     st.markdown("**Status:** :orange[⏳ Awaiting Review]")
-                                    st.caption("Belum dinilai.")
 
                                 if st.button("Review/Edit", key=f"go_{row['id']}", use_container_width=True, disabled=is_locked):
-                                    st.session_state.active_review_app = row['name']; st.rerun()
+                                    st.session_state.active_review_app = row['name']
+                                    st.rerun()
 
             if not is_locked and len(reviews_lookup) >= len(apps) > 0:
                 st.divider()
