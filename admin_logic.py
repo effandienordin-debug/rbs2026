@@ -77,7 +77,6 @@ def bulk_add_reviewers_dialog(engine, hash_password):
                                  {"u":parts[1], "n":parts[0], "p":hash_password(parts[2])})
         st.cache_resource.clear(); st.success("✅ Done!"); time.sleep(1); st.rerun()
 
-# --- 3. RENDER DASHBOARD ---
 # --- GANTIKAN FUNGSI INI SAHAJA DALAM admin_logic.py ---
 
 def render_dashboard(engine):
@@ -86,8 +85,7 @@ def render_dashboard(engine):
         st.cache_resource.clear()
         st.rerun()
         
-    # --- SQL PADU: KIRA TERUS DALAM DATABASE (ANTI-SPACE & ANTI-CASING) ---
-    # Kita buat subquery untuk kira assigned dan done bagi setiap penilai
+    # SQL level matching untuk pastikan kiraan tepat (Anti-Space & Case Insensitive)
     query_p1 = text("""
         SELECT 
             r.username, 
@@ -103,7 +101,6 @@ def render_dashboard(engine):
     try:
         stats_p1 = pd.read_sql(query_p1, engine)
         
-        # Phase 1 Status Display
         st.subheader("📋 Phase 1: Shortlisting Status")
         if stats_p1.empty:
             st.info("No reviewers found in database.")
@@ -114,22 +111,22 @@ def render_dashboard(engine):
                 assigned = row['assigned']
                 done = row['done']
                 
-                # Warna bertukar hijau bila semua selesai
+                # Warna box (hijau jika selesai, kuning jika belum)
                 bg = "#E6FFFA" if (done >= assigned and assigned > 0) else "#FFFBEB"
+                
                 with cols[i % 4]:
+                    # PEMBETULAN: Kunci warna teks guna color: #1a202c (hitam pekat)
                     st.markdown(f"""
-                        <div style='background-color:{bg}; padding:15px; border-radius:8px; border:1px solid #ddd; margin-bottom:10px; text-align:center;'>
-                            <strong style='font-size:14px;'>{f}</strong><br>
-                            <span style='font-size:18px; color:#2d3748;'>{done} / {assigned}</span><br>
-                            <small style='color:#718096;'>Completed</small>
+                        <div style='background-color:{bg}; padding:15px; border-radius:8px; border:1px solid #cbd5e0; margin-bottom:10px; text-align:center;'>
+                            <strong style='color: #1a202c; font-size:14px; display: block; margin-bottom: 5px;'>{f}</strong>
+                            <span style='color: #2d3748; font-size:20px; font-weight: bold;'>{done} / {assigned}</span><br>
+                            <small style='color: #4a5568; font-weight: 500;'>Completed</small>
                         </div>
                     """, unsafe_allow_html=True)
 
         st.divider()
-        
-        # --- PHASE 2 LEADERBOARD ---
+        # --- PHASE 2 RANKING ---
         st.subheader("🏁 Phase 2: Leaderboard (Ranking)")
-        # Tarik purata markah dari JSON
         p2_reviews = pd.read_sql("SELECT applicant_name, responses FROM phase2_reviews", engine)
         
         if not p2_reviews.empty:
