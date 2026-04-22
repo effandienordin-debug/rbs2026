@@ -78,44 +78,81 @@ def bulk_add_reviewers_dialog(engine, hash_password):
         st.cache_resource.clear(); st.success("✅ Done!"); time.sleep(1); st.rerun()
 
 # --- 3. RENDER DASHBOARD ---
+# --- GANTIKAN FUNGSI INI SAHAJA DALAM admin_logic.py ---
+
 def render_dashboard(engine):
     st.header("📊 Live Evaluation Tracker")
-    if st.button("🔄 Sync Dashboard Data"): st.cache_resource.clear(); st.rerun()
+    if st.button("🔄 Sync Dashboard Data"):
+        st.cache_resource.clear()
+        st.rerun()
+        
+    # --- SQL PADU: KIRA TERUS DALAM DATABASE (ANTI-SPACE & ANTI-CASING) ---
+    # Kita buat subquery untuk kira assigned dan done bagi setiap penilai
+    query_p1 = text("""
+        SELECT 
+            r.username, 
+            r.full_name,
+            (SELECT COUNT(*) FROM applicant_assignments aa 
+             WHERE TRIM(LOWER(aa.reviewer_username)) = TRIM(LOWER(r.username))) as assigned,
+            (SELECT COUNT(*) FROM reviews rev 
+             WHERE TRIM(LOWER(rev.reviewer_username)) = TRIM(LOWER(r.username))) as done
+        FROM reviewers r
+        ORDER BY r.full_name ASC
+    """)
     
-    revs_df = pd.read_sql("SELECT username, full_name FROM reviewers", engine)
-    
-    # --- PHASE 1 STATUS ---
-    st.subheader("📋 Phase 1: Shortlisting Status")
-    assign_p1 = pd.read_sql("SELECT reviewer_username FROM applicant_assignments", engine)
-    reviews_p1 = pd.read_sql("SELECT reviewer_username FROM reviews", engine)
-    
-    if not revs_df.empty:
-        cols = st.columns(4)
-        for i, row in revs_df.iterrows():
-            u, f = row['username'].strip().lower(), row['full_name']
-            # Kod matching yang lebih 'kebal'
-            assigned = len(assign_p1[assign_p1['reviewer_username'].str.strip().str.lower() == u])
-            done = len(reviews_p1[reviews_p1['reviewer_username'].str.strip().str.lower() == u])
-            bg = "#E6FFFA" if (done >= assigned and assigned > 0) else "#FFFBEB"
-            with cols[i % 4]:
-                st.markdown(f"<div style='background-color:{bg}; padding:10px; border-radius:5px; border:1px solid #ddd; margin-bottom:10px;'><strong>{f}</strong><br>{done}/{assigned} Done</div>", unsafe_allow_html=True)
+    try:
+        stats_p1 = pd.read_sql(query_p1, engine)
+        
+        # Phase 1 Status Display
+        st.subheader("📋 Phase 1: Shortlisting Status")
+        if stats_p1.empty:
+            st.info("No reviewers found in database.")
+        else:
+            cols = st.columns(4)
+            for i, row in stats_p1.iterrows():
+                f = row['full_name']
+                assigned = row['assigned']
+                done = row['done']
+                
+                # Warna bertukar hijau bila semua selesai
+                bg = "#E6FFFA" if (done >= assigned and assigned > 0) else "#FFFBEB"
+                with cols[i % 4]:
+                    st.markdown(f"""
+                        <div style='background-color:{bg}; padding:15px; border-radius:8px; border:1px solid #ddd; margin-bottom:10px; text-align:center;'>
+                            <strong style='font-size:14px;'>{f}</strong><br>
+                            <span style='font-size:18px; color:#2d3748;'>{done} / {assigned}</span><br>
+                            <small style='color:#718096;'>Completed</small>
+                        </div>
+                    """, unsafe_allow_html=True)
 
-    st.divider()
-    # --- PHASE 2 RANKING ---
-    st.subheader("🏁 Phase 2: Winner Selection Leaderboard")
-    p2_reviews = pd.read_sql("SELECT applicant_name, responses FROM phase2_reviews", engine)
-    if not p2_reviews.empty:
-        ld = []
-        for _, r in p2_reviews.iterrows():
-            try:
-                score = json.loads(r['responses']).get('total_score', 0)
-                ld.append({"Applicant": r['applicant_name'], "Score": float(score)})
-            except: continue
-        if ld:
-            df_ld = pd.DataFrame(ld).groupby("Applicant")["Score"].mean().sort_values(ascending=False).reset_index()
-            df_ld.index += 1
-            st.table(df_ld)
-    else: st.info("No Phase 2 scores yet.")
+        st.divider()
+        
+        # --- PHASE 2 LEADERBOARD ---
+        st.subheader("🏁 Phase 2: Leaderboard (Ranking)")
+        # Tarik purata markah dari JSON
+        p2_reviews = pd.read_sql("SELECT applicant_name, responses FROM phase2_reviews", engine)
+        
+        if not p2_reviews.empty:
+            leaderboard_data = []
+            for _, r_row in p2_reviews.iterrows():
+                try:
+                    res = json.loads(r_row['responses'])
+                    leaderboard_data.append({
+                        "Applicant": r_row['applicant_name'], 
+                        "Score": float(res.get('total_score', 0))
+                    })
+                except: continue
+            
+            if leaderboard_data:
+                ld_df = pd.DataFrame(leaderboard_data)
+                final_ld = ld_df.groupby("Applicant")["Score"].mean().sort_values(ascending=False).reset_index()
+                final_ld.index += 1
+                st.table(final_ld)
+            else: st.info("No scores calculated yet.")
+        else: st.info("Waiting for Phase 2 submissions...")
+
+    except Exception as e:
+        st.error(f"🚨 Dashboard Error: {str(e)}")
 
 # --- 4. RENDER MANAGEMENT ---
 def render_management(menu, engine, hash_password, delete_item):
