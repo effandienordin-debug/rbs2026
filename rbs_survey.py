@@ -108,9 +108,21 @@ with st.sidebar:
 
     st.divider()
     if st.button("Logout", type="primary", use_container_width=True):
+        # 1. Set flag supaya sync_auth tak login balik dari kuki lama
+        st.session_state.logout_in_progress = True
+        
+        # 2. Padam kuki & URL params
         cookie_manager.delete('rbs_session')
         st.query_params.clear()
-        st.session_state.clear()
+        
+        # 3. Reset data pengguna sahaja
+        st.session_state.authenticated = False
+        st.session_state.username = None
+        st.session_state.role = None
+        st.session_state.full_name = None
+        
+        # 4. Rerun untuk kembali ke login page
+        time.sleep(0.2) # Beri masa sikit untuk browser proses delete kuki
         st.rerun()
 
 # --- 7. MODULE ROUTING ---
