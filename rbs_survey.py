@@ -1,92 +1,120 @@
 import streamlit as st
 import extra_streamlit_components as stx
-import pandas as pd
 import json
 import time
-from sqlalchemy import text
 from datetime import datetime, timedelta
-from database_utils import engine, init_db, check_password, hash_password, get_malaysia_time, delete_item
+from sqlalchemy import text
+
+# Import utiliti dari fail lain
+from database_utils import get_engine, init_db, check_password, hash_password, get_malaysia_time, delete_item
 from form_components import render_evaluation_fields, render_scoring_fields
 from admin_logic import render_dashboard, render_management
 from reviewer_logic import render_review_form
 from reporting_logic import render_reporting 
 
-# --- 1. INISIALISASI DATABASE ---
-init_db()
+# --- 1. PAGE CONFIG (Mesti paling atas) ---
 st.set_page_config(page_title="RBS Grant System", layout="wide")
 
-# --- 2. COOKIE MANAGER SETUP ---
+# --- 2. ENGINE & DB INIT (Cached) ---
+# Kita panggil engine sekali je, tak payah buat banyak kali
+engine = get_engine()
+
+@st.cache_resource
+def startup_db():
+    init_db() # Run sekali je masa apps mula-mula start
+    return True
+
+startup_db()
+
+# --- 3. PERSISTENT LOGIN (Cookie & Session) ---
 if 'cookie_manager' not in st.session_state:
     st.session_state.cookie_manager = stx.CookieManager(key="rbs_mgr")
+
 cookie_manager = st.session_state.cookie_manager
 
-# --- 3. PROSES ARAHAN KUKI YANG TERTUNGGAK (PENDING QUEUE) ---
-if st.session_state.get('pending_login_cookie'):
-    cookie_manager.set('rbs_session_data', st.session_state.pending_login_cookie, expires_at=datetime.now() + timedelta(days=1))
-    del st.session_state['pending_login_cookie']
+def handle_persistence():
+    # Kalau session dah ada, tak payah buat apa-apa
+    if st.session_state.get('authenticated'):
+        return
 
-if st.session_state.get('pending_logout'):
-    try: cookie_manager.delete('rbs_session_data')
-    except KeyError: pass 
-    del st.session_state['pending_logout']
+    # Check kuki secara senyap
+    session_data = cookie_manager.get('rbs_session_data')
+    if session_data:
+        try:
+            if isinstance(session_data, str):
+                session_data = json.loads(session_data)
+            
+            st.session_state.update({
+                "authenticated": True,
+                "username": session_data.get('username'),
+                "role": session_data.get('role'),
+                "full_name": session_data.get('full_name')
+            })
+        except:
+            pass
 
-# --- 4. INIT AUTH STATE ---
-if 'authenticated' not in st.session_state: st.session_state.authenticated = False
+handle_persistence()
 
-# --- 5. AUTO LOGIN DARI KUKI ---
-if not st.session_state.authenticated:
-    if st.session_state.get('just_logged_out_flag'):
-        st.session_state.just_logged_out_flag = False
-    else:
-        session_data = cookie_manager.get('rbs_session_data')
-        if session_data:
-            try:
-                if isinstance(session_data, str): session_data = json.loads(session_data)
-                st.session_state.update({
-                    "authenticated": True, "username": session_data.get('username'),
-                    "role": session_data.get('role'), "full_name": session_data.get('full_name')
-                })
-            except Exception: pass
-
-# --- 6. LOGIN INTERFACE ---
-if not st.session_state.authenticated:
+# --- 4. LOGIN INTERFACE ---
+if not st.session_state.get('authenticated'):
     st.title("🔐 RBS Login")
     with st.form("login_form"):
         login_role = st.radio("Log in as:", ["Reviewer", "Admin"], horizontal=True)
-        u, p = st.text_input("Username"), st.text_input("Password", type="password")
+        u = st.text_input("Username").strip()
+        p = st.text_input("Password", type="password")
+        
         if st.form_submit_button("Login", use_container_width=True):
             with engine.connect() as conn:
-                query = text("SELECT password_hash, 'Admin' as role, full_name FROM users WHERE username = :u") if login_role == "Admin" else text("SELECT password_hash, 'Reviewer' as role, full_name FROM reviewers WHERE username = :u")
+                # Query laju: hanya ambil apa yang perlu
+                tbl = "users" if login_role == "Admin" else "reviewers"
+                query = text(f"SELECT password_hash, full_name FROM {tbl} WHERE username = :u")
                 res = conn.execute(query, {"u": u}).fetchone()
 
                 if res and check_password(p, res[0]):
-                    st.session_state.update({"authenticated": True, "username": u, "role": res[1], "full_name": res[2]})
-                    st.session_state.pending_login_cookie = json.dumps({"username": u, "role": res[1], "full_name": res[2]})
-                    st.success(f"Login successful! Welcome {res[2]}"); time.sleep(0.5); st.rerun()
-                else: st.error("Invalid credentials or wrong role selected.")
+                    role = "Admin" if login_role == "Admin" else "Reviewer"
+                    # Simpan dalam session
+                    st.session_state.update({
+                        "authenticated": True, 
+                        "username": u, 
+                        "role": role, 
+                        "full_name": res[1]
+                    })
+                    # Simpan dalam kuki (Tahan 1 hari)
+                    cookie_data = {"username": u, "role": role, "full_name": res[1]}
+                    cookie_manager.set(
+                        'rbs_session_data', 
+                        json.dumps(cookie_data), 
+                        expires_at=datetime.now() + timedelta(days=1)
+                    )
+                    st.success(f"Welcome {res[1]}!"); time.sleep(0.5); st.rerun()
+                else:
+                    st.error("Invalid credentials.")
     st.stop()
 
-# --- 7. SIDEBAR & LOGOUT ---
+# --- 5. SIDEBAR & NAVIGATION ---
 with st.sidebar:
     st.title(f"👤 {st.session_state.full_name}")
     st.caption(f"Logged in as: {st.session_state.role}")
 
     if st.session_state.role == "Admin":
-        menu = st.radio("Navigation", ["Dashboard", "Reporting", "Phase 1 Management", "Phase 2 Management", "Reviewer Management", "User Management"])
+        menu = st.radio("Navigation", ["Dashboard", "Reporting", "Phase 1 Management", "Phase 2 Management", "Reviewer Management"])
     else:
         menu = st.radio("Navigation", ["Phase 1: Shortlisting", "Phase 2: Winner Selection"])
 
     st.divider()
     if st.button("Logout", use_container_width=True, type="primary"):
+        cookie_manager.delete('rbs_session_data')
         st.session_state.clear()
-        st.session_state.pending_logout = True
-        st.session_state.just_logged_out_flag = True
+        time.sleep(0.2)
         st.rerun()
 
-# --- 8. MODULE ROUTING ---
-if menu == "Dashboard": render_dashboard(engine)
-elif menu == "Reporting": render_reporting(engine)
-elif menu in ["User Management", "Reviewer Management", "Phase 1 Management", "Phase 2 Management"]: render_management(menu, engine, hash_password, delete_item)
-elif menu in ["Phase 1: Shortlisting", "Phase 2: Winner Selection"]:
+# --- 6. ROUTING (Laju sebab data dah di-cache dalam sub-modul) ---
+if menu == "Dashboard":
+    render_dashboard(engine)
+elif menu == "Reporting":
+    render_reporting(engine)
+elif menu in ["Reviewer Management", "Phase 1 Management", "Phase 2 Management"]:
+    render_management(menu, engine, hash_password, delete_item)
+elif "Phase" in menu:
     phase_num = 1 if "Phase 1" in menu else 2
     render_review_form(engine, get_malaysia_time, phase_num, render_evaluation_fields, render_scoring_fields)
