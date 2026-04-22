@@ -32,15 +32,15 @@ cookie_manager = st.session_state.cookie_manager
 
 # --- 4. PERSISTENCE LOGIC (PUNCA LOGOUT FIX) ---
 def sync_auth():
-    # A. Jika sedang dalam proses logout, jangan buat apa-apa
-    if st.session_state.get('logout_in_progress'):
-        return False
-
-    # B. Check Session State (Paling laju)
+    # A. Jika dah memang authenticated dalam session, lepas terus (Paling utama)
     if st.session_state.get('authenticated'):
         return True
 
-    # C. Check URL Params (Sangat laju - Fix refresh issue)
+    # B. Cuma sekat "Auto-Login" dari kuki/URL kalau baru lepas klik Logout
+    if st.session_state.get('logout_in_progress'):
+        return False
+
+    # C. Check URL Params
     params = st.query_params
     if "u" in params and "r" in params:
         st.session_state.update({
@@ -51,7 +51,7 @@ def sync_auth():
         })
         return True
 
-    # D. Check Cookies (Backup)
+    # D. Check Cookies
     val = cookie_manager.get('rbs_session')
     if val:
         try:
@@ -60,12 +60,11 @@ def sync_auth():
                 "authenticated": True,
                 "username": val['u'], "role": val['r'], "full_name": val['n']
             })
-            st.query_params.update({"u": val['u'], "r": val['r'], "n": val['n']})
             return True
         except: pass
     
     return False
-
+    
 # Jalankan sync_auth
 is_auth = sync_auth()
 
