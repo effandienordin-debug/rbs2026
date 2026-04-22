@@ -32,11 +32,15 @@ cookie_manager = st.session_state.cookie_manager
 
 # --- 4. PERSISTENCE LOGIC (PUNCA LOGOUT FIX) ---
 def sync_auth():
-    # A. Check Session State dulu (Paling laju)
+    # A. Jika sedang dalam proses logout, jangan buat apa-apa
+    if st.session_state.get('logout_in_progress'):
+        return False
+
+    # B. Check Session State (Paling laju)
     if st.session_state.get('authenticated'):
         return True
 
-    # B. Check URL Params (Sangat laju - Fix refresh issue)
+    # C. Check URL Params (Sangat laju - Fix refresh issue)
     params = st.query_params
     if "u" in params and "r" in params:
         st.session_state.update({
@@ -47,20 +51,15 @@ def sync_auth():
         })
         return True
 
-    # C. Check Cookies (Backup untuk long-term)
-    # Kita bagi masa sikit untuk CookieManager "bercakap" dengan browser
-    time.sleep(0.1) 
+    # D. Check Cookies (Backup)
     val = cookie_manager.get('rbs_session')
     if val:
         try:
             if isinstance(val, str): val = json.loads(val)
             st.session_state.update({
                 "authenticated": True,
-                "username": val['u'],
-                "role": val['r'],
-                "full_name": val['n']
+                "username": val['u'], "role": val['r'], "full_name": val['n']
             })
-            # Sync balik ke URL params supaya refresh lepas ni lagi laju
             st.query_params.update({"u": val['u'], "r": val['r'], "n": val['n']})
             return True
         except: pass
